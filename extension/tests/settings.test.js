@@ -83,3 +83,67 @@ test('検索キーワードの既定値が入っている', () => {
   assert.ok(Settings.DEFAULTS.searchKeywords.length >= 10);
   assert.ok(Settings.DEFAULTS.searchKeywords.includes('箱根'));
 });
+
+// ------------------------------------------------------- 高価格帯の宿の優先
+
+const EXPENSIVE = { preferExpensive: true, minHotelPrice: 25000 };
+
+test('閾値以上の宿だけを選ぶ', () => {
+  const items = [
+    { url: 'https://travel.yahoo.co.jp/dp/cheap/', price: 8000 },
+    { url: 'https://travel.yahoo.co.jp/dp/rich/', price: 32000 },
+    { url: 'https://travel.yahoo.co.jp/help/', price: null },
+  ];
+  for (let i = 0; i < 200; i++) {
+    assert.strictEqual(Settings.pickLink(items, EXPENSIVE).url, 'https://travel.yahoo.co.jp/dp/rich/');
+  }
+});
+
+test('ちょうど閾値の宿は対象に含む', () => {
+  const items = [
+    { url: 'https://travel.yahoo.co.jp/dp/a/', price: 24999 },
+    { url: 'https://travel.yahoo.co.jp/dp/b/', price: 25000 },
+  ];
+  assert.strictEqual(Settings.pickLink(items, EXPENSIVE).price, 25000);
+});
+
+test('高価格帯が無ければ通常の選び方に戻る', () => {
+  const items = [
+    { url: 'https://travel.yahoo.co.jp/dp/cheap/', price: 8000 },
+    { url: 'https://travel.yahoo.co.jp/help/', price: null },
+  ];
+  const picked = Settings.pickLink(items, EXPENSIVE);
+  assert.ok(picked);
+  assert.ok(items.some((i) => i.url === picked.url));
+});
+
+test('優先をオフにすれば価格を見ない', () => {
+  const items = [
+    { url: 'https://travel.yahoo.co.jp/dp/cheap/', price: 8000 },
+    { url: 'https://travel.yahoo.co.jp/dp/rich/', price: 99000 },
+  ];
+  const urls = new Set();
+  for (let i = 0; i < 300; i++) {
+    urls.add(Settings.pickLink(items, { preferExpensive: false }).url);
+  }
+  assert.strictEqual(urls.size, 2, '両方が選ばれるはず');
+});
+
+test('踏んではいけないURLは価格が高くても除外する', () => {
+  const items = [
+    { url: 'https://travel.yahoo.co.jp/dp/a/reserve/', price: 99000 },
+    { url: 'https://shopping.yahoo.co.jp/', price: 99000 },
+    { url: 'https://travel.yahoo.co.jp/dp/ok/', price: 30000 },
+  ];
+  assert.strictEqual(Settings.pickLink(items, EXPENSIVE).url, 'https://travel.yahoo.co.jp/dp/ok/');
+});
+
+test('文字列の配列でも受け付ける（後方互換）', () => {
+  const picked = Settings.pickLink(['https://travel.yahoo.co.jp/dp/a/'], EXPENSIVE);
+  assert.strictEqual(picked.url, 'https://travel.yahoo.co.jp/dp/a/');
+});
+
+test('候補が無ければ null', () => {
+  assert.strictEqual(Settings.pickLink([], EXPENSIVE), null);
+  assert.strictEqual(Settings.pickLink([{ url: 'https://example.com/' }], EXPENSIVE), null);
+});

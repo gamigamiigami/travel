@@ -46,6 +46,11 @@
   ];
   const SEARCH_BUTTON_TEXTS = ['検索', 'さがす', '探す', 'この条件で'];
 
+  // 検索結果カードに出ている料金。「12,000円」「¥12,000」など。
+  const PRICE_RE = /(?:￥|¥)?\s*([0-9０-９][0-9０-９,，]{2,})\s*円?/g;
+  const PRICE_MIN = 2000;
+  const PRICE_MAX = 1000000;
+
   const MAX_POPUP_TEXT = 6000;
   const MAX_BODY_TEXT = 200000;
   const SCAN_COOLDOWN_MS = 3000;
@@ -250,9 +255,35 @@
     return true;
   }
 
-  /** 巡回用: このページから辿れるリンクを返す。絞り込みは background 側で行う。 */
+  /**
+   * リンクが載っているカードの表示価格を読む。
+   *
+   * 価格の絞り込みURLの仕様が分からないので、検索結果に「見えている」金額から
+   * 判断する。1枚のカードに「1泊12,000円〜」と「合計24,000円」が併記される
+   * ことがあるため、最小値を採る。最小値が閾値を超えていれば、どう数えても
+   * 高価格帯だと言える。
+   */
+  function cardPrice(anchor) {
+    let node = anchor;
+    for (let depth = 0; depth < 5 && node; depth++) {
+      const text = node.innerText || '';
+      if (text.length >= 20) {
+        const prices = [];
+        for (const match of text.matchAll(PRICE_RE)) {
+          const value = D.toInt(match[1]);
+          if (value !== null && value >= PRICE_MIN && value <= PRICE_MAX) prices.push(value);
+        }
+        if (prices.length) return Math.min(...prices);
+      }
+      node = node.parentElement;
+    }
+    return null;
+  }
+
+  /** 巡回用: 辿れるリンクを、分かる範囲の表示価格つきで返す。 */
   function collectLinks() {
-    const urls = new Set();
+    const seen = new Set();
+    const items = [];
     for (const anchor of document.querySelectorAll('a[href]')) {
       const href = anchor.getAttribute('href');
       if (!href || /^(#|javascript:|mailto:|tel:)/.test(href)) continue;
@@ -262,9 +293,14 @@
       } catch (e) {
         continue;
       }
-      if (absolute !== location.href) urls.add(absolute);
+      if (absolute === location.href || seen.has(absolute)) continue;
+      seen.add(absolute);
+      // 価格を読むのは宿の詳細らしきリンクだけ。全リンクでやると重い。
+      const price = /\/dp\/|hotel|yad/i.test(absolute) ? cardPrice(anchor) : null;
+      items.push({ url: absolute, price });
+      if (items.length >= 400) break;
     }
-    return Array.from(urls).slice(0, 400);
+    return items;
   }
 
   function scheduleScan(reason) {

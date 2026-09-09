@@ -379,10 +379,13 @@ async function patrol(reason) {
     const wander = Math.max(0, Number(settings.wanderPages) || 0);
     for (let i = 0; i < wander; i++) {
       const response = await sendToTab(tab.id, { type: 'links' });
-      const links = ((response && response.links) || []).filter(Settings.isAllowedUrl);
-      const next = Settings.pickWeighted(links);
+      const next = Settings.pickLink((response && response.links) || [], settings);
       if (!next) break;
-      await visit(tab.id, next, `${targetName} > 散策`, settings, browser);
+      // 価格が読めたときは履歴にも残す。あとで「高い宿のほうが出るのか」を検証できる。
+      const label = next.price
+        ? `${targetName} > 宿(${next.price.toLocaleString()}円)`
+        : `${targetName} > 散策`;
+      await visit(tab.id, next.url, label, settings, browser);
     }
     await chrome.storage.local.set({ lastPatrolAt: Date.now() });
   } catch (e) {

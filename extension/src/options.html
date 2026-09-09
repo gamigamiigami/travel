@@ -79,6 +79,16 @@
     <span>検索する地名（カンマまたは改行区切り。毎回ランダムに1つ選びます）</span>
     <textarea id="searchKeywords"></textarea>
   </label>
+  <label class="row"><input type="checkbox" id="preferExpensive"> 高価格帯の宿を優先して開く</label>
+  <label class="field" style="max-width:280px">
+    <span>いくら以上を高価格帯とみなすか（円／泊）</span>
+    <input type="number" id="minHotelPrice" min="0" step="1000">
+  </label>
+  <p class="hint">
+    検索結果に表示されている料金を読んで判断します。1枚のカードに複数の金額が
+    出ている場合は<b>安いほう</b>を採るので、「どう数えてもこの額以上」の宿だけが対象です。
+    該当が無ければ通常どおり選びます。
+  </p>
   <label class="field">
     <span>毎回見に行くページ（1行に1つ。「名前 &lt;TAB or 半角スペース&gt; URL」でも可）</span>
     <textarea id="targets"></textarea>

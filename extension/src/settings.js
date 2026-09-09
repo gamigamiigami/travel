@@ -22,6 +22,10 @@
     // 「具体的に宿を調べると出やすい」という噂に合わせて、巡回中に実際に
     // 検索を実行する。リンクを辿るだけより人間の動きに近い。
     searchEnabled: true,
+    // 噂では高価格帯の宿を調べていると出やすいと言われている。
+    // 検索結果に表示されている価格を読んで、この額以上の宿を優先して開く。
+    preferExpensive: true,
+    minHotelPrice: 25000,
     searchKeywords: [
       '箱根', '熱海', '京都', '草津温泉', '別府', '沖縄', '軽井沢',
       '有馬温泉', '城崎温泉', '日光', '伊豆', '白浜温泉', '登別温泉',
@@ -107,6 +111,34 @@
     return urls[urls.length - 1];
   }
 
+  /**
+   * 巡回で次に開くリンクを選ぶ。
+   *
+   * items は {url, price} の配列（price は分からなければ null）。
+   * 高価格帯の宿が候補にあればそちらを優先し、無ければ通常の重み付けに戻す。
+   */
+  function pickLink(items, options) {
+    const opts = options || {};
+    const normalized = (items || [])
+      .map((item) => (typeof item === 'string' ? { url: item, price: null } : item))
+      .filter((item) => item && item.url && isAllowedUrl(item.url));
+    if (!normalized.length) return null;
+
+    if (opts.preferExpensive && Number(opts.minHotelPrice) > 0) {
+      const threshold = Number(opts.minHotelPrice);
+      const expensive = normalized.filter(
+        (item) => typeof item.price === 'number' && item.price >= threshold
+      );
+      if (expensive.length) return pickFrom(expensive);
+    }
+    return pickFrom(normalized);
+  }
+
+  function pickFrom(items) {
+    const url = pickWeighted(items.map((item) => item.url));
+    return items.find((item) => item.url === url) || items[0];
+  }
+
   function inQuietHours(settings, date) {
     const start = Number(settings.quietStartHour);
     const end = Number(settings.quietEndHour);
@@ -134,6 +166,7 @@
     isAllowedUrl,
     linkWeight,
     pickWeighted,
+    pickLink,
     inQuietHours,
     browserName,
   };
