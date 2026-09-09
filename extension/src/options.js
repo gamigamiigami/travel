@@ -1,7 +1,7 @@
 'use strict';
 
 const CHECKBOXES = [
-  'enabled', 'patrolEnabled', 'notifyDesktop', 'notifyNtfy', 'notifyDiscord', 'autoClaim', 'searchEnabled', 'preferExpensive',
+  'enabled', 'patrolEnabled', 'notifyDesktop', 'notifyNtfy', 'notifyDiscord', 'autoClaim', 'searchEnabled', 'preferExpensive', 'expandBadge',
 ];
 const NUMBERS = [
   'intervalMinutes', 'wanderPages', 'dwellSeconds', 'maxPatrolsPerDay',

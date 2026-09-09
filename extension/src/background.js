@@ -123,11 +123,18 @@ async function dailyCount() {
 // ---------------------------------------------------------------- 通知
 
 function buildTitle(hit) {
-  return `🎫 ${hit.amount.toLocaleString()}円OFFクーポン出現！`;
+  if (hit.amount) return `🎫 ${hit.amount.toLocaleString()}円OFFクーポン出現！`;
+  // 畳まれたバッジの段階では金額が画面に出ていない。それでも急いで知らせる。
+  const remaining = hit.timeLimitMin ? `（残${hit.timeLimitMin}分）` : '';
+  return `🎫 クーポンが出ています！${remaining}`;
 }
 
 function buildBody(hit, context) {
-  const lines = [`金額: ${hit.amount.toLocaleString()}円OFF`];
+  const lines = [
+    hit.amount
+      ? `金額: ${hit.amount.toLocaleString()}円OFF`
+      : '金額: 画面にまだ出ていません（バッジを開くと分かります）',
+  ];
   if (hit.code) lines.push(`コード: ${hit.code}`);
   if (hit.timeLimitMin) lines.push(`有効時間: 約${hit.timeLimitMin}分`);
   if (context.claimed) lines.push('獲得ボタンを自動で押しました');
@@ -235,7 +242,13 @@ async function handleCoupon(message, sender) {
 
   const hit = message.hit;
   const browser = Settings.browserName(navigator.userAgent);
-  const signature = `${browser}|${hit.amount}`;
+  // 金額が分かる前と後で別々に通知したい。金額不明のときは「いつ切れるか」で
+  // 区別する。同じクーポンなら失効時刻は変わらないので、繰り返し通知されない。
+  const signature = hit.amount
+    ? `${browser}|${hit.amount}`
+    : `${browser}|badge|${Math.round(
+        (Date.now() + (hit.timeLimitMin || 0) * 60000) / 600000
+      )}`;
 
   await recordHistory({
     t: Date.now(),
@@ -243,7 +256,7 @@ async function handleCoupon(message, sender) {
     target: message.targetName || message.pageTitle || '(手動閲覧)',
     url: message.pageUrl,
     detected: true,
-    amount: hit.amount,
+    amount: hit.amount || null,
     score: hit.score,
     reasons: (hit.reasons || []).join('・'),
   });
@@ -259,7 +272,13 @@ async function handleCoupon(message, sender) {
   });
   await notify(settings, title, body, message.pageUrl);
   await chrome.storage.local.set({
-    lastHit: { t: Date.now(), amount: hit.amount, url: message.pageUrl, score: hit.score },
+    lastHit: {
+      t: Date.now(),
+      amount: hit.amount || null,
+      timeLimitMin: hit.timeLimitMin || null,
+      url: message.pageUrl,
+      score: hit.score,
+    },
   });
 }
 
@@ -342,7 +361,11 @@ async function dwellAndScan(tabId, url, targetName, settings, browser) {
     await logActivity(`${targetName}：ページを読み取れませんでした`, 'warn');
   } else if (hits.length) {
     await logActivity(
-      `${targetName}：${hits.map((h) => h.amount.toLocaleString() + '円').join('・')} を検出`,
+      `${targetName}：` +
+        hits
+          .map((h) => (h.amount ? h.amount.toLocaleString() + '円' : '金額不明のクーポン'))
+          .join('・') +
+        ' を検出',
       'hit'
     );
   } else {
@@ -435,6 +458,10 @@ async function patrol(reason, options) {
       active: visible,
       pinned: !visible,
     });
+    if (visible) {
+      // 表示モードのときはウィンドウ自体も前面に出す。
+      await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
+    }
     await chrome.storage.local.set({ [PATROL_TAB_KEY]: tab.id });
 
     const targetName = target.name || target.url;

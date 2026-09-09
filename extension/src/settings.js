@@ -26,6 +26,8 @@
     // 検索結果に表示されている価格を読んで、この額以上の宿を優先して開く。
     preferExpensive: true,
     minHotelPrice: 25000,
+    // 「残N分」バッジを見つけたら押して中身（金額）を出す
+    expandBadge: true,
     searchKeywords: [
       '箱根', '熱海', '京都', '草津温泉', '別府', '沖縄', '軽井沢',
       '有馬温泉', '城崎温泉', '日光', '伊豆', '白浜温泉', '登別温泉',
@@ -62,6 +64,8 @@
   ];
   // 「具体的に宿を調べている」動きを作るため、この形のリンクを優先する
   const PREFERRED_URL_PATTERNS = ['/dp/', '/hotel', '/domestic', '/area', '/search', '/onsen', '/theme', '/ranking'];
+  // 宿が並ばないページ。踏んでも無駄なので選ばれにくくする。
+  const AVOID_URL_PATTERNS = ['/kanko/', '/help', '/sitemap', '/guide', '/notice'];
 
   function randomTopic() {
     const bytes = new Uint8Array(9);
@@ -96,6 +100,7 @@
   }
 
   function linkWeight(url) {
+    if (AVOID_URL_PATTERNS.some((pattern) => new RegExp(pattern, 'i').test(url))) return 0.15;
     return PREFERRED_URL_PATTERNS.some((pattern) => new RegExp(pattern, 'i').test(url)) ? 4 : 1;
   }
 
@@ -160,6 +165,7 @@
     ALLOWED_HOST_SUFFIX,
     BLOCKED_URL_PATTERNS,
     PREFERRED_URL_PATTERNS,
+    AVOID_URL_PATTERNS,
     randomTopic,
     getSettings,
     saveSettings,

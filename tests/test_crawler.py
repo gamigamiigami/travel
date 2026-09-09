@@ -275,3 +275,61 @@ def test_screenshot_saved_on_hit(watcher):
     watcher.visit(page, "edge", TOP, "トップページ")
     assert len(page.screenshots) == 1
     assert page.screenshots[0].endswith(".png")
+
+
+# ------------------------------------------------------------------
+# 畳まれたクーポンバッジ（「残155分」しか出ない状態）の検出
+# ------------------------------------------------------------------
+
+class FakeBadgeFrame(FakeFrame):
+    """バッジらしき要素を返すフレーム。"""
+
+    def __init__(self, url, body_text="", badge_texts=()):
+        super().__init__(url, body_text=body_text)
+        self._badges = list(badge_texts)
+
+    def query_selector_all(self, selector):
+        if selector == "[class*='popup-badge']":
+            return [FakeElement(text) for text in self._badges]
+        return []
+
+
+def test_countdown_badge_is_treated_as_a_coupon(watcher):
+    """金額が無くても、残り時間バッジが出ていればクーポンはある。"""
+    page = FakePage([
+        FakeBadgeFrame(TOP, body_text="宿泊プランを探す", badge_texts=["残155分"])
+    ])
+    hits = watcher.check(page, "edge")
+    assert len(hits) == 1
+    assert hits[0].amount is None
+    assert hits[0].time_limit_min == 155
+    assert hits[0].source == "badge"
+
+
+def test_badge_is_ignored_when_amount_is_known(watcher):
+    """金額が取れているなら、そちらを使う。バッジで二重に数えない。"""
+    page = FakeBadgeFrame(
+        TOP,
+        body_text="スペシャルクーポン 5,000円OFF 残り180分限定",
+        badge_texts=["残155分"],
+    )
+    hits = watcher.check(FakePage([page]), "edge")
+    assert [h.amount for h in hits] == [5000]
+
+
+def test_long_text_is_not_a_badge(watcher):
+    """本文中の「残り155分」のような長い文はバッジとみなさない。"""
+    long_text = "こちらの宿は人気です。" * 8 + "残155分"  # 60文字を超える
+    page = FakePage([FakeBadgeFrame(TOP, badge_texts=[long_text])])
+    assert watcher.check(page, "edge") == []
+
+
+def test_badge_notifies(watcher):
+    page = FakePage([FakeBadgeFrame(TOP, badge_texts=["残155分"])])
+    assert watcher.visit(page, "edge", TOP, "トップページ") == 1
+
+    from yahoo_coupon_watcher.history import read_rows
+
+    rows = read_rows(watcher.history.path)
+    assert rows[0].detected is True
+    assert rows[0].amount is None

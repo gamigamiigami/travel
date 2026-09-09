@@ -71,6 +71,21 @@
   const PRICE_MIN = 2000;
   const PRICE_MAX = 1000000;
 
+  // ★ 検出の本丸。
+  // Yahoo!トラベルのクーポンは、畳まれた状態では「残155分」という
+  // カウントダウンのバッジしか出ない。「クーポン」の語も金額も無い。
+  // 金額は展開して初めて出てくるので、まずこのバッジ自体を
+  // 「クーポンが出ている証拠」として扱う。
+  const COUNTDOWN_RE = /残\s*([0-9]{1,4})\s*分/;
+  const BADGE_SELECTORS = [
+    "[class*='popup-badge']",
+    "[class*='oupon-badge']",
+    "[class*='ouponBadge']",
+    "[class*='badge-counter']",
+    "[class*='badge']",
+  ];
+  const MAX_BADGE_TEXT = 60;
+
   const MAX_POPUP_TEXT = 6000;
   const MAX_BODY_TEXT = 200000;
   const SCAN_COOLDOWN_MS = 3000;
@@ -78,6 +93,7 @@
 
   let settings = null;
   let lastScanAt = 0;
+  let expandTried = false;
   const reportedNearMiss = new Set();
   let debounceTimer = null;
   const claimed = new Set();
@@ -228,6 +244,51 @@
     return false;
   }
 
+  /**
+   * カウントダウンのバッジを探す。見つかればクーポンが出ている。
+   * バッジは文字数が少ないので、長いテキストの要素は除外する。
+   */
+  function findCouponBadge() {
+    const roots = [document].concat(shadowRoots());
+    const selectors = BADGE_SELECTORS.concat(POPUP_SELECTORS);
+    for (const root of roots) {
+      for (const selector of selectors) {
+        let elements;
+        try {
+          elements = root.querySelectorAll(selector);
+        } catch (e) {
+          continue;
+        }
+        for (const element of Array.from(elements).slice(0, 12)) {
+          if (!isVisible(element)) continue;
+          const text = (element.innerText || '').trim();
+          if (!text || text.length > MAX_BADGE_TEXT) continue;
+          const match = COUNTDOWN_RE.exec(text);
+          if (!match) continue;
+          const minutes = Number(match[1]);
+          if (!(minutes >= 1 && minutes <= 1440)) continue;
+          return { element, minutes, text };
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
+   * バッジを押して中身（金額）を出す。
+   * 「予約」「決済」などの語を含む要素は絶対に押さない。
+   */
+  function expandBadge(element) {
+    const label = (element.innerText || '').slice(0, 100);
+    if (CLICK_FORBIDDEN.test(label)) return false;
+    try {
+      element.click();
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
   function best(results) {
     const byAmount = new Map();
     for (const { hit, element } of results) {
@@ -280,6 +341,40 @@
         targetName: targetName || null,
         reason,
       }).catch(() => {});
+    }
+
+    // 金額が取れなくても、カウントダウンのバッジが出ていればクーポンはある。
+    // 見逃すくらいなら「金額不明」で先に知らせる。60分で消えるのだから。
+    if (!results.length) {
+      const badge = findCouponBadge();
+      if (badge) {
+        chrome.runtime.sendMessage({
+          type: 'coupon',
+          hit: {
+            amount: null,
+            score: 99,
+            reasons: ['残り時間バッジ'],
+            code: null,
+            timeLimitMin: badge.minutes,
+            snippet: badge.text,
+            source: 'badge',
+            url: location.href,
+          },
+          claimed: false,
+          pageTitle: document.title,
+          pageUrl: location.href,
+          targetName: targetName || null,
+          reason,
+        }).catch(() => {});
+
+        // バッジを開けば金額が出る。開いたあとにもう一度見る。
+        if (settings.expandBadge && !expandTried) {
+          expandTried = true;
+          if (expandBadge(badge.element)) {
+            setTimeout(() => scan('afterExpand', targetName), 1500);
+          }
+        }
+      }
     }
     return results;
   }

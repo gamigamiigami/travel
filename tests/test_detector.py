@@ -172,3 +172,43 @@ def test_wording_and_format_variants(text, expected):
 def test_yen_mark_alone_is_not_enough():
     # 円記号だけの価格表示はクーポンではない
     assert scan_text("このホテル ¥5,000 から") == []
+
+
+def test_real_coupon_panel_text():
+    """診断データとスクリーンショットから起こした実物の文言。"""
+    real = "使うor貯めるが選べる！\n1,000円分\nクーポン獲得しました\n詳しくみる"
+    hits = scan_text(real, strict=False)
+    assert [h.amount for h in hits] == [1000]
+    assert hits[0].score >= 6, f"score={hits[0].score} では余裕がない"
+    assert "円分表記" in hits[0].reasons
+
+
+def test_collapsed_badge_has_no_amount():
+    """畳まれたバッジには「残155分」しか無い。金額は判定できない。"""
+    from yahoo_coupon_watcher.detector import _find_time_limit
+
+    assert _find_time_limit("残155分") == 155
+    assert scan_text("残155分", strict=False) == []
+
+
+def test_badge_hit_without_amount():
+    """畳まれたバッジは金額が分からない。それでも通知できる形にする。"""
+    hit = CouponHit(
+        amount=None,
+        source="badge",
+        snippet="残155分",
+        time_limit_min=155,
+        browser="edge",
+        score=99,
+        reasons=("残り時間バッジ",),
+    )
+    assert "クーポンが出ています" in hit.title()
+    assert "残155分" in hit.title()
+    assert "画面にまだ出ていません" in hit.body()
+    assert hit.signature == "edge|badge"
+
+
+def test_badge_signature_differs_from_amount_signature():
+    badge = CouponHit(amount=None, source="badge", snippet="", browser="edge")
+    priced = CouponHit(amount=5000, source="popup", snippet="", browser="edge")
+    assert badge.signature != priced.signature

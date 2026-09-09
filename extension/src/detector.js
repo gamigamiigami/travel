@@ -24,6 +24,8 @@
   // 巻き戻って無限ループになる。パターンは文字列で持ち、都度生成する。
   const P_AMOUNT_OFF =
     '([0-9０-９][0-9０-９,，、]{0,9})\\s*円\\s*(?:分\\s*)?(?:OFF|off|Off|ＯＦＦ|オフ|割引|引き|引)';
+  // 「1,000円分」形式。クーポンのポップアップはこの書き方をする。
+  const P_AMOUNT_YEN_BUN = '([0-9０-９][0-9０-９,，、]{0,9})\\s*円\\s*分';
   // 「¥5,000 OFF」のように円記号で書かれる場合
   const P_AMOUNT_YEN_MARK =
     '(?:¥|￥)\\s*([0-9０-９][0-9０-９,，、]{0,9})\\s*(?:OFF|off|Off|ＯＦＦ|オフ|割引|引き|引)?';
@@ -43,6 +45,8 @@
     [/クーポン/, 1, 'クーポン表記'],
   ];
   const SCORE_TIME_LIMIT = 4;
+  // 「1,000円分」という書き方はクーポンのパネル特有。値引き表記より強い証拠。
+  const SCORE_AMOUNT_BUN = 2;
   const SCORE_AMOUNT_OFF = 2;
   const SCORE_COUPON_CODE = 2;
 
@@ -98,6 +102,10 @@
     if (re(P_AMOUNT_OFF).test(text)) {
       score += SCORE_AMOUNT_OFF;
       reasons.push('円OFF表記');
+    }
+    if (re(P_AMOUNT_YEN_BUN).test(text)) {
+      score += SCORE_AMOUNT_BUN;
+      reasons.push('円分表記');
     }
     if (findCode(text)) {
       score += SCORE_COUPON_CODE;
@@ -165,6 +173,7 @@
 
     for (const [pattern, needsKeyword] of [
       [P_AMOUNT_OFF, true],
+      [P_AMOUNT_YEN_BUN, true],
       [P_AMOUNT_YEN_MARK, true],
       [P_AMOUNT_COUPON, false],
     ]) {

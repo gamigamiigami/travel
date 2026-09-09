@@ -29,7 +29,7 @@ test('外部サイトと、予約・決済・アカウント操作系は踏ま�
 });
 
 test('宿の詳細ページを優先して選ぶ', () => {
-  const links = Array(5).fill('https://travel.yahoo.co.jp/help/');
+  const links = Array(5).fill('https://travel.yahoo.co.jp/list/');
   links.push('https://travel.yahoo.co.jp/dp/hotel-999/');
   let hotel = 0;
   for (let i = 0; i < 2000; i++) {
@@ -146,4 +146,27 @@ test('文字列の配列でも受け付ける（後方互換）', () => {
 test('候補が無ければ null', () => {
   assert.strictEqual(Settings.pickLink([], EXPENSIVE), null);
   assert.strictEqual(Settings.pickLink([{ url: 'https://example.com/' }], EXPENSIVE), null);
+});
+
+
+test('宿が並ばないページは選ばれにくくする', () => {
+  // 観光情報やヘルプに潜っても宿は出てこないので、巡回として無駄になる。
+  const links = ['https://travel.yahoo.co.jp/kanko/kanazawa/', 'https://travel.yahoo.co.jp/list/'];
+  let kanko = 0;
+  for (let i = 0; i < 2000; i++) {
+    if (Settings.pickWeighted(links).includes('/kanko/')) kanko++;
+  }
+  const rate = kanko / 2000;
+  assert.ok(rate < 0.25, `観光ページが選ばれすぎています: ${rate}`);
+});
+
+test('宿の詳細ページは避けるページより強い', () => {
+  assert.ok(
+    Settings.linkWeight('https://travel.yahoo.co.jp/dp/a/') >
+      Settings.linkWeight('https://travel.yahoo.co.jp/list/')
+  );
+  assert.ok(
+    Settings.linkWeight('https://travel.yahoo.co.jp/list/') >
+      Settings.linkWeight('https://travel.yahoo.co.jp/kanko/a/')
+  );
 });

@@ -133,3 +133,20 @@ test('表記ゆれ（円分・円記号・別の言い回し）も拾う', () =>
 test('円記号だけの価格表示はクーポンとみなさない', () => {
   assert.deepStrictEqual(scan('このホテル ¥5,000 から'), []);
 });
+
+test('実際に観測されたクーポンパネルの文言を検出する', () => {
+  // 診断データとスクリーンショットから起こした実物の文言
+  const real = '使うor貯めるが選べる！\n1,000円分\nクーポン獲得しました\n詳しくみる';
+  const hits = scan(real, { strict: false });
+  assert.deepStrictEqual(amounts(hits), [1000]);
+  assert.ok(hits[0].score >= 6, `score=${hits[0].score} では余裕がない`);
+  assert.ok(hits[0].reasons.includes('円分表記'));
+});
+
+test('畳まれたバッジの残り時間を読み取れる', () => {
+  // バッジには「残155分」しか書かれていない。金額判定はできないが、
+  // 残り時間は読める（これがクーポン存在の証拠になる）。
+  assert.strictEqual(D.findTimeLimit('残155分'), 155);
+  assert.strictEqual(D.findTimeLimit('残171分'), 171);
+  assert.deepStrictEqual(scan('残155分', { strict: false }), []);
+});

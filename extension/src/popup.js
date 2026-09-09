@@ -31,7 +31,9 @@ async function render() {
   $('last').textContent = when(store.lastPatrolAt);
   $('next').textContent = settings.patrolEnabled ? when(store.nextPatrolAt) : '自動巡回オフ';
   $('hit').textContent = store.lastHit
-    ? `${store.lastHit.amount.toLocaleString()}円 (${when(store.lastHit.t)})`
+    ? `${
+        store.lastHit.amount ? store.lastHit.amount.toLocaleString() + '円' : '金額不明'
+      } (${when(store.lastHit.t)})`
     : 'まだなし';
 }
 

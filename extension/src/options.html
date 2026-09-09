@@ -116,6 +116,12 @@
     <textarea id="ignorePatterns" placeholder="誤検知が出たら、その文言をここに足してください"></textarea>
   </label>
   <label class="row"><input type="checkbox" id="autoClaim"> 「クーポンを獲得」ボタンがあれば自動で押す</label>
+  <label class="row"><input type="checkbox" id="expandBadge"> 「残◯分」バッジを開いて金額を確認する</label>
+  <p class="hint">
+    クーポンは畳まれた状態だと「残155分」というカウントダウンしか表示されず、
+    金額は開かないと分かりません。<b>バッジが出た時点でまず通知し</b>、開いて金額が
+    分かったらもう一度通知します。
+  </p>
   <p class="hint">
     「予約」「決済」「確定」などの語を含むボタンは、設定に関係なく絶対に押しません。
   </p>

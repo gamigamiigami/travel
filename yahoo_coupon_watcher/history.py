@@ -146,7 +146,7 @@ def _bucket(row: Row, key: str) -> str:
     if key == "target":
         return row.target
     if key == "amount":
-        return f"{row.amount:,}円" if row.amount else "（検出なし）"
+        return f"{row.amount:,}円" if row.amount else "（金額不明）"
     raise ValueError(f"未対応の集計軸です: {key}")
 
 

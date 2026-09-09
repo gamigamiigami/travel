@@ -50,6 +50,17 @@ CLICK_FORBIDDEN = re.compile(
     r"予約|決済|購入|支払|申込|申し込|確定|キャンセル|退会|ログアウト|削除"
 )
 
+# 畳まれた状態のクーポンは「残155分」というカウントダウンのバッジしか出さない。
+# 「クーポン」の語も金額も無いので、このバッジ自体を存在の証拠として扱う。
+COUNTDOWN_RE = re.compile(r"残\s*([0-9]{1,4})\s*分")
+BADGE_SELECTORS = (
+    "[class*='popup-badge']",
+    "[class*='oupon-badge']",
+    "[class*='ouponBadge']",
+    "[class*='badge-counter']",
+)
+MAX_BADGE_TEXT = 60
+
 MAX_POPUP_TEXT = 6000
 MAX_BODY_TEXT = 200_000
 MAX_JSON_BYTES = 1_500_000
@@ -271,11 +282,52 @@ class Watcher:
             )
         return hits
 
+    def scan_badge(self, page: Page, browser: str) -> list[CouponHit]:
+        """「残◯分」のカウントダウンバッジを探す。あればクーポンが出ている。"""
+        for frame in self._frames(page):
+            for selector in BADGE_SELECTORS + POPUP_SELECTORS:
+                try:
+                    elements = frame.query_selector_all(selector)
+                except PlaywrightError:
+                    continue
+                for element in elements[:12]:
+                    try:
+                        if not element.is_visible():
+                            continue
+                        text = (element.inner_text() or "").strip()
+                    except PlaywrightError:
+                        continue
+                    if not text or len(text) > MAX_BADGE_TEXT:
+                        continue
+                    match = COUNTDOWN_RE.search(text)
+                    if not match:
+                        continue
+                    minutes = int(match.group(1))
+                    if not 1 <= minutes <= 1440:
+                        continue
+                    return [
+                        CouponHit(
+                            amount=None,
+                            source="badge",
+                            snippet=text,
+                            time_limit_min=minutes,
+                            url=page.url,
+                            browser=browser,
+                            score=99,
+                            reasons=("残り時間バッジ",),
+                            target=self.current_target,
+                        )
+                    ]
+        return []
+
     def check(self, page: Page, browser: str) -> list[CouponHit]:
         hits = list(self._network_hits)
         self._network_hits.clear()
         hits.extend(self.scan_popups(page, browser))
         hits.extend(self.scan_page(page, browser))
+        # 金額が取れたものが1つも無いときだけ、バッジの存在で判断する。
+        if not hits:
+            hits.extend(self.scan_badge(page, browser))
         return dedupe_hits(hits)
 
     # ---------------------------------------------------------- クーポン獲得
@@ -457,4 +509,4 @@ def dedupe_hits(hits: Sequence[CouponHit]) -> list[CouponHit]:
         prev = best.get(hit.signature)
         if prev is None or (prev.code is None and hit.code is not None):
             best[hit.signature] = hit
-    return sorted(best.values(), key=lambda h: h.amount, reverse=True)
+    return sorted(best.values(), key=lambda h: (h.amount or 0), reverse=True)

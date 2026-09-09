@@ -46,6 +46,8 @@ WEAK_KEYWORDS: tuple[str, ...] = STRONG_KEYWORDS + ("クーポン", "coupon", "C
 _AMOUNT_OFF = re.compile(
     r"([0-9０-９][0-9０-９,，、]{0,9})\s*円\s*(?:分\s*)?(?:OFF|off|Off|ＯＦＦ|オフ|割引|引き|引)",
 )
+# 「1,000円分」形式。クーポンのポップアップはこの書き方をする。
+_AMOUNT_YEN_BUN = re.compile(r"([0-9０-９][0-9０-９,，、]{0,9})\s*円\s*分")
 # 「¥5,000 OFF」のように円記号で書かれる場合
 _AMOUNT_YEN_MARK = re.compile(
     r"(?:¥|￥)\s*([0-9０-９][0-9０-９,，、]{0,9})\s*(?:OFF|off|Off|ＯＦＦ|オフ|割引|引き|引)?",
@@ -74,6 +76,7 @@ SCORE_RULES: tuple[tuple[str, int, str], ...] = (
     (r"クーポン", 1, "クーポン表記"),
 )
 SCORE_TIME_LIMIT = 4      # 60分/90分/180分などの残り時間表記があれば加点
+SCORE_AMOUNT_BUN = 2      # 「1,000円分」はクーポンのパネル特有の書き方
 SCORE_AMOUNT_OFF = 2      # 「◯◯円OFF」形式の金額表記があれば加点
 SCORE_COUPON_CODE = 2     # クーポンコードらしき英数字があれば加点
 # クーポンコードらしき英数字（8桁が多いと言われている）。
@@ -91,9 +94,14 @@ _AMOUNT_KEY = re.compile(
 
 @dataclass(frozen=True)
 class CouponHit:
-    """検出したクーポン1件。"""
+    """検出したクーポン1件。
 
-    amount: int
+    amount は None になりうる。畳まれた状態のクーポンバッジには「残155分」と
+    しか書かれておらず、金額は開くまで画面に出てこないため。金額が分からなくても
+    「クーポンが出ている」ことは分かるので、見逃すより先に知らせる。
+    """
+
+    amount: int | None
     source: str  # "network" | "popup" | "page"
     snippet: str
     code: str | None = None
@@ -113,14 +121,23 @@ class CouponHit:
         コードは含めない。同じクーポンでもポップアップからは取れてページ全体からは
         取れない、ということが起きるため、含めると同じものを2回通知してしまう。
         """
+        if self.amount is None:
+            return f"{self.browser or '-'}|badge"
         return f"{self.browser or '-'}|{self.amount}"
 
     def title(self) -> str:
         who = f"[{self.browser}] " if self.browser else ""
+        if self.amount is None:
+            remaining = f"（残{self.time_limit_min}分）" if self.time_limit_min else ""
+            return f"{who}🎫 クーポンが出ています！{remaining}"
         return f"{who}🎫 {self.amount:,}円OFFクーポン出現！"
 
     def body(self) -> str:
-        lines = [f"金額: {self.amount:,}円OFF"]
+        lines = [
+            "金額: 画面にまだ出ていません（バッジを開くと分かります）"
+            if self.amount is None
+            else f"金額: {self.amount:,}円OFF"
+        ]
         if self.code:
             lines.append(f"コード: {self.code}")
         if self.time_limit_min:
@@ -179,6 +196,9 @@ def score_text(text: str) -> tuple[int, tuple[str, ...]]:
     if _AMOUNT_OFF.search(text):
         score += SCORE_AMOUNT_OFF
         reasons.append("円OFF表記")
+    if _AMOUNT_YEN_BUN.search(text):
+        score += SCORE_AMOUNT_BUN
+        reasons.append("円分表記")
     if _find_code(text):
         score += SCORE_COUPON_CODE
         reasons.append("クーポンコード")
@@ -238,6 +258,7 @@ def scan_text(
 
     for regex, needs_keyword in (
         (_AMOUNT_OFF, True),
+        (_AMOUNT_YEN_BUN, True),
         (_AMOUNT_YEN_MARK, True),
         (_AMOUNT_COUPON, False),
     ):
@@ -281,7 +302,7 @@ def scan_text(
             if prev is None or _better(hit, prev):
                 hits[str(amount)] = hit
 
-    return sorted(hits.values(), key=lambda h: h.amount, reverse=True)
+    return sorted(hits.values(), key=lambda h: (h.amount or 0), reverse=True)
 
 
 def _better(candidate: CouponHit, current: CouponHit) -> bool:
@@ -385,7 +406,7 @@ def scan_json(
                 hits[str(amount)] = hit
 
     if hits:
-        return sorted(hits.values(), key=lambda h: h.amount, reverse=True)
+        return sorted(hits.values(), key=lambda h: (h.amount or 0), reverse=True)
 
     # 構造から取れなかった場合のフォールバック。
     try:
