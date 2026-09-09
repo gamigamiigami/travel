@@ -17,6 +17,17 @@ const NOTIFY_ICON = 'icons/icon128.png';
 // ---------------------------------------------------------------- 小道具
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** ログに出すための短いURL表記。 */
+function shortUrl(url) {
+  try {
+    const parsed = new URL(url);
+    const path = (parsed.pathname + parsed.search).slice(0, 60);
+    return path === '/' ? 'トップ' : path;
+  } catch (e) {
+    return String(url || '').slice(0, 60);
+  }
+}
 const jitter = (value, ratio) => value * (1 - ratio + Math.random() * ratio * 2);
 const todayKey = () => new Date().toISOString().slice(0, 10);
 
@@ -60,6 +71,23 @@ function waitForLoad(tabId, timeoutMs = 30000) {
     }
     chrome.tabs.onUpdated.addListener(listener);
   });
+}
+
+// ------------------------------------------------------------ 巡回ログ
+
+const ACTIVITY_MAX = 200;
+
+/** 巡回中に何をしたかを残す。裏で動くので、見えないと不安になるため。 */
+async function logActivity(message, level) {
+  try {
+    const stored = await chrome.storage.local.get('activity');
+    const activity = stored.activity || [];
+    activity.push({ t: Date.now(), level: level || 'info', message: String(message) });
+    if (activity.length > ACTIVITY_MAX) activity.splice(0, activity.length - ACTIVITY_MAX);
+    await chrome.storage.local.set({ activity });
+  } catch (e) {
+    /* ログのために巡回を止めない */
+  }
 }
 
 // ---------------------------------------------------------------- 履歴
@@ -245,9 +273,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
   if (message.type === 'patrolNow') {
-    patrol('manual').then(() => sendResponse({ ok: true })).catch((e) =>
-      sendResponse({ ok: false, error: String(e) })
-    );
+    patrol('manual', { visible: !!message.visible })
+      .then(() => sendResponse({ ok: true }))
+      .catch((e) => sendResponse({ ok: false, error: String(e) }));
     return true;
   }
   if (message.type === 'testNotify') {
@@ -299,6 +327,16 @@ async function dwellAndScan(tabId, url, targetName, settings, browser) {
 
   const response = await sendToTab(tabId, { type: 'scan', targetName });
   const hits = (response && response.hits) || [];
+  if (!response) {
+    await logActivity(`${targetName}：ページを読み取れませんでした`, 'warn');
+  } else if (hits.length) {
+    await logActivity(
+      `${targetName}：${hits.map((h) => h.amount.toLocaleString() + '円').join('・')} を検出`,
+      'hit'
+    );
+  } else {
+    await logActivity(`${targetName}：クーポンなし`);
+  }
   if (hits.length === 0) {
     await recordHistory({
       t: Date.now(),
@@ -327,21 +365,35 @@ async function visit(tabId, url, targetName, settings, browser) {
  * より人間の行動に近く、検索結果からは宿の詳細ページにも入りやすい。
  */
 async function search(tabId, keyword, targetName, settings, browser) {
+  await logActivity(`「${keyword}」で検索します`);
+  const before = await chrome.tabs.get(tabId).catch(() => null);
   const response = await sendToTab(tabId, { type: 'search', keyword });
   if (!response || !response.ok) {
-    console.info('検索を実行できませんでした:', response && response.reason);
+    await logActivity(
+      `検索できませんでした（${(response && response.reason) || '応答なし'}）`,
+      'warn'
+    );
     return 0;
   }
   // 検索がページ遷移になるか画面内で完結するかは分からないので、
   // 遷移を待ちつつ、待てなくても先に進む。
   await Promise.race([waitForLoad(tabId, 15000), sleep(6000)]);
   const tab = await chrome.tabs.get(tabId).catch(() => null);
+
+  // 「検索を実行した」と「実際に検索結果に移った」は別物なので、URLの変化で確かめる。
+  const beforeUrl = (before && before.url) || '';
+  const afterUrl = (tab && tab.url) || '';
+  if (afterUrl && afterUrl !== beforeUrl) {
+    await logActivity(`検索できました → ${shortUrl(afterUrl)}`);
+  } else {
+    await logActivity('検索を実行しましたが、ページが変わりませんでした', 'warn');
+  }
   return dwellAndScan(tabId, (tab && tab.url) || '', `${targetName} > 検索:${keyword}`, settings, browser);
 }
 
 let patrolling = false;
 
-async function patrol(reason) {
+async function patrol(reason, options) {
   if (patrolling) return;
   const settings = await Settings.getSettings();
   if (!settings.enabled) return;
@@ -363,7 +415,15 @@ async function patrol(reason) {
     if (!targets.length) return;
     const target = targets[Math.floor(Math.random() * targets.length)];
 
-    tab = await chrome.tabs.create({ url: 'about:blank', active: false, pinned: true });
+    const visible = !!(options && options.visible);
+    await logActivity(
+      `巡回開始：${target.name || target.url}${visible ? '（表示モード）' : ''}`
+    );
+    tab = await chrome.tabs.create({
+      url: 'about:blank',
+      active: visible,
+      pinned: !visible,
+    });
     await chrome.storage.local.set({ [PATROL_TAB_KEY]: tab.id });
 
     const targetName = target.name || target.url;
@@ -379,18 +439,34 @@ async function patrol(reason) {
     const wander = Math.max(0, Number(settings.wanderPages) || 0);
     for (let i = 0; i < wander; i++) {
       const response = await sendToTab(tab.id, { type: 'links' });
-      const next = Settings.pickLink((response && response.links) || [], settings);
-      if (!next) break;
+      const items = (response && response.links) || [];
+      const threshold = Number(settings.minHotelPrice) || 0;
+      const priced = items.filter((item) => typeof item.price === 'number');
+      const expensive = priced.filter((item) => item.price >= threshold);
+      await logActivity(
+        `リンク${items.length}件（価格が読めたもの${priced.length}件／` +
+          `${threshold.toLocaleString()}円以上 ${expensive.length}件）`
+      );
+      const next = Settings.pickLink(items, settings);
+      if (!next) {
+        await logActivity('たどれるリンクがありませんでした', 'warn');
+        break;
+      }
       // 価格が読めたときは履歴にも残す。あとで「高い宿のほうが出るのか」を検証できる。
       const label = next.price
         ? `${targetName} > 宿(${next.price.toLocaleString()}円)`
         : `${targetName} > 散策`;
+      await logActivity(
+        next.price ? `宿を開きます（${next.price.toLocaleString()}円）` : `次のページへ：${shortUrl(next.url)}`
+      );
       await visit(tab.id, next.url, label, settings, browser);
     }
     await chrome.storage.local.set({ lastPatrolAt: Date.now() });
   } catch (e) {
     console.error('巡回に失敗しました', e);
+    await logActivity('巡回中にエラー: ' + ((e && e.message) || e), 'warn');
   } finally {
+    await logActivity('巡回終了');
     clearInterval(keepAlive);
     if (tab) {
       await chrome.tabs.remove(tab.id).catch(() => {});

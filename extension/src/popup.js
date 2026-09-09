@@ -72,8 +72,39 @@ async function scanTab(tabId) {
   return { ok: false, error: lastError };
 }
 
+function clockOf(timestamp) {
+  const date = new Date(timestamp);
+  return (
+    String(date.getHours()).padStart(2, '0') + ':' +
+    String(date.getMinutes()).padStart(2, '0')
+  );
+}
+
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])
+  );
+}
+
+async function renderActivity() {
+  const activity = (await chrome.storage.local.get('activity')).activity || [];
+  const container = document.getElementById('activity');
+  const recent = activity.slice(-6).reverse();
+  container.innerHTML = recent.length
+    ? recent
+        .map(
+          (entry) =>
+            `<div><time>${clockOf(entry.t)}</time>` +
+            `<span class="${entry.level === 'hit' ? 'hit' : entry.level === 'warn' ? 'warn' : ''}">` +
+            `${escapeHtml(entry.message)}</span></div>`
+        )
+        .join('')
+    : 'まだ記録がありません';
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
   await render();
+  await renderActivity();
 
   $('enabled').addEventListener('change', async () => {
     await Settings.saveSettings({ enabled: $('enabled').checked });
@@ -82,10 +113,17 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   $('now').addEventListener('click', async () => {
-    show('巡回中です。バックグラウンドのタブで見に行っています…', true);
+    show('巡回中です。裏のタブで見に行っています…', true);
     await chrome.runtime.sendMessage({ type: 'patrolNow' }).catch(() => {});
-    show('巡回が終わりました。', true);
+    show('巡回が終わりました。下の「最近の動き」で内容を確認できます。', true);
     await render();
+    await renderActivity();
+  });
+
+  $('watch').addEventListener('click', async () => {
+    // タブを表に出して巡回する。popup は閉じてしまうので、あとでログを見てもらう。
+    show('タブを表示して巡回します。動きを見てください。', true);
+    chrome.runtime.sendMessage({ type: 'patrolNow', visible: true }).catch(() => {});
   });
 
   $('scan').addEventListener('click', async () => {

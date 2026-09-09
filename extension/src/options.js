@@ -101,6 +101,34 @@ function escapeHtml(text) {
   );
 }
 
+function clockOf(timestamp) {
+  const date = new Date(timestamp);
+  return (
+    String(date.getHours()).padStart(2, '0') + ':' +
+    String(date.getMinutes()).padStart(2, '0') + ':' +
+    String(date.getSeconds()).padStart(2, '0')
+  );
+}
+
+async function renderActivity() {
+  const activity = (await chrome.storage.local.get('activity')).activity || [];
+  const container = $('activity');
+  if (!activity.length) {
+    container.textContent = 'まだ記録がありません。下のボタンで1回動かしてみてください。';
+    return;
+  }
+  container.innerHTML = activity
+    .slice()
+    .reverse()
+    .map(
+      (entry) =>
+        `<div><time>${clockOf(entry.t)}</time>` +
+        `<span class="${entry.level === 'hit' ? 'hit' : entry.level === 'warn' ? 'warn' : ''}">` +
+        `${escapeHtml(entry.message)}</span></div>`
+    )
+    .join('');
+}
+
 async function getHistory() {
   return (await chrome.storage.local.get('history')).history || [];
 }
@@ -187,6 +215,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     link.download = `yahoo-coupon-history-${new Date().toISOString().slice(0, 10)}.csv`;
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
+  });
+
+  await renderActivity();
+  setInterval(renderActivity, 5000);
+
+  $('watchPatrol').addEventListener('click', async () => {
+    $('watchPatrol').disabled = true;
+    $('watchPatrol').textContent = '巡回中…（タブの動きを見てください）';
+    await chrome.runtime.sendMessage({ type: 'patrolNow', visible: true }).catch(() => {});
+    $('watchPatrol').disabled = false;
+    $('watchPatrol').textContent = '巡回を目で見る（タブを表示して1回実行）';
+    await renderActivity();
+  });
+
+  $('clearActivity').addEventListener('click', async () => {
+    await chrome.storage.local.set({ activity: [] });
+    await renderActivity();
   });
 
   $('clearHistory').addEventListener('click', async () => {
