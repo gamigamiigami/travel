@@ -17,7 +17,16 @@
     // 巡回
     patrolEnabled: true,
     intervalMinutes: 18,      // ±40%のゆらぎを付けて使う
-    wanderPages: 3,
+    wanderPages: 4,
+
+    // 「具体的に宿を調べると出やすい」という噂に合わせて、巡回中に実際に
+    // 検索を実行する。リンクを辿るだけより人間の動きに近い。
+    searchEnabled: true,
+    searchKeywords: [
+      '箱根', '熱海', '京都', '草津温泉', '別府', '沖縄', '軽井沢',
+      '有馬温泉', '城崎温泉', '日光', '伊豆', '白浜温泉', '登別温泉',
+      '湯布院', '那須', '金沢', '高山', '鬼怒川温泉', '道後温泉', '蔵王',
+    ],
     dwellSeconds: 9,
     quietStartHour: 1,
     quietEndHour: 7,

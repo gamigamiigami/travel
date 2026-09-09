@@ -29,6 +29,23 @@
     'クーポンをゲット', 'ゲットする', '今すぐ獲得',
   ];
 
+  // 検索窓らしき入力欄。サイトの作りが変わっても、どれか当たれば良い。
+  const SEARCH_INPUT_SELECTORS = [
+    'input[type="search"]',
+    'input[name*="keyword" i]',
+    'input[name*="query" i]',
+    'input[name*="word" i]',
+    'input[placeholder*="エリア"]',
+    'input[placeholder*="地名"]',
+    'input[placeholder*="宿"]',
+    'input[placeholder*="ホテル"]',
+    'input[placeholder*="キーワード"]',
+    'input[placeholder*="目的地"]',
+    'input[aria-label*="検索"]',
+    'form input[type="text"]',
+  ];
+  const SEARCH_BUTTON_TEXTS = ['検索', 'さがす', '探す', 'この条件で'];
+
   const MAX_POPUP_TEXT = 6000;
   const MAX_BODY_TEXT = 200000;
   const SCAN_COOLDOWN_MS = 3000;
@@ -164,6 +181,75 @@
     return results;
   }
 
+  /**
+   * 検索窓に地名を入れて実行する。
+   *
+   * React などで作られた入力欄は value を直接書き換えても気づかれないので、
+   * ネイティブの setter を呼んでから input/change を発火させる。
+   */
+  function fillAndSearch(keyword) {
+    const input = findSearchInput();
+    if (!input) return { ok: false, reason: '検索窓が見つかりません' };
+
+    try {
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value'
+      ).set;
+      input.focus();
+      setter.call(input, keyword);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    } catch (e) {
+      return { ok: false, reason: '入力に失敗しました' };
+    }
+
+    return { ok: submitSearch(input), reason: 'submitted' };
+  }
+
+  function findSearchInput() {
+    for (const selector of SEARCH_INPUT_SELECTORS) {
+      let elements;
+      try {
+        elements = document.querySelectorAll(selector);
+      } catch (e) {
+        continue;
+      }
+      for (const element of elements) {
+        if (element.disabled || element.readOnly) continue;
+        if (!isVisible(element)) continue;
+        return element;
+      }
+    }
+    return null;
+  }
+
+  function submitSearch(input) {
+    // 1) 近くの検索ボタンを押す（予約・決済系の語を含むものは押さない）
+    const scope = input.closest('form') || document.body;
+    const buttons = scope.querySelectorAll('button, [role="button"], input[type="submit"]');
+    for (const button of Array.from(buttons).slice(0, 60)) {
+      const label = (button.innerText || button.value || button.getAttribute('aria-label') || '').trim();
+      if (!label || !SEARCH_BUTTON_TEXTS.some((text) => label.includes(text))) continue;
+      if (CLICK_FORBIDDEN.test(label)) continue;
+      if (!isVisible(button)) continue;
+      button.click();
+      return true;
+    }
+    // 2) フォームがあれば submit
+    if (input.form && typeof input.form.requestSubmit === 'function') {
+      input.form.requestSubmit();
+      return true;
+    }
+    // 3) 最後の手段として Enter を送る
+    for (const type of ['keydown', 'keypress', 'keyup']) {
+      input.dispatchEvent(
+        new KeyboardEvent(type, { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true })
+      );
+    }
+    return true;
+  }
+
   /** 巡回用: このページから辿れるリンクを返す。絞り込みは background 側で行う。 */
   function collectLinks() {
     const urls = new Set();
@@ -205,6 +291,10 @@
           url: location.href,
         });
       });
+      return true;
+    }
+    if (message.type === 'search') {
+      sendResponse(fillAndSearch(message.keyword));
       return true;
     }
     if (message.type === 'links') {

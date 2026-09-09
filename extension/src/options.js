@@ -1,7 +1,7 @@
 'use strict';
 
 const CHECKBOXES = [
-  'enabled', 'patrolEnabled', 'notifyDesktop', 'notifyNtfy', 'notifyDiscord', 'autoClaim',
+  'enabled', 'patrolEnabled', 'notifyDesktop', 'notifyNtfy', 'notifyDiscord', 'autoClaim', 'searchEnabled',
 ];
 const NUMBERS = [
   'intervalMinutes', 'wanderPages', 'dwellSeconds', 'maxPatrolsPerDay',
@@ -45,6 +45,7 @@ async function load() {
   $('targets').value = formatTargets(settings.targets);
   $('amountsWhitelist').value = (settings.amountsWhitelist || []).join(',');
   $('ignorePatterns').value = (settings.ignorePatterns || []).join('\n');
+  $('searchKeywords').value = (settings.searchKeywords || []).join('、');
   $('discordField').style.display = settings.notifyDiscord ? '' : 'none';
   await renderStats();
 }
@@ -58,6 +59,11 @@ async function save() {
   patch.targets = parseTargets($('targets').value);
   patch.amountsWhitelist = parseAmounts($('amountsWhitelist').value);
   patch.ignorePatterns = $('ignorePatterns').value.split('\n').map((s) => s.trim()).filter(Boolean);
+  patch.searchKeywords = $('searchKeywords').value
+    .split(/[,、\n]/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (!patch.searchKeywords.length) patch.searchKeywords = Settings.DEFAULTS.searchKeywords;
   if (!patch.targets.length) patch.targets = Settings.DEFAULTS.targets;
 
   await Settings.saveSettings(patch);

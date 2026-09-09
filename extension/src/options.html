@@ -69,6 +69,16 @@
     <label class="field"><span>停止する時間帯：開始</span><input type="number" id="quietStartHour" min="0" max="23"></label>
     <label class="field"><span>停止する時間帯：終了</span><input type="number" id="quietEndHour" min="0" max="23"></label>
   </div>
+  <label class="row"><input type="checkbox" id="searchEnabled"> 巡回中に実際に地名で検索する</label>
+  <p class="hint">
+    「具体的に宿を調べると出やすい」という噂に合わせた動きです。
+    トップページを見たあとに検索窓へ地名を入れて実行し、検索結果からさらに宿の
+    ページへ潜ります。
+  </p>
+  <label class="field">
+    <span>検索する地名（カンマまたは改行区切り。毎回ランダムに1つ選びます）</span>
+    <textarea id="searchKeywords"></textarea>
+  </label>
   <label class="field">
     <span>毎回見に行くページ（1行に1つ。「名前 &lt;TAB or 半角スペース&gt; URL」でも可）</span>
     <textarea id="targets"></textarea>

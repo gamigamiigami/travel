@@ -293,9 +293,8 @@ async function closeStalePatrolTab() {
   }
 }
 
-async function visit(tabId, url, targetName, settings, browser) {
-  await chrome.tabs.update(tabId, { url });
-  await waitForLoad(tabId);
+/** ページを少し眺めてから調べ、結果を履歴に残す。 */
+async function dwellAndScan(tabId, url, targetName, settings, browser) {
   await sleep(jitter(settings.dwellSeconds * 1000, 0.4));
 
   const response = await sendToTab(tabId, { type: 'scan', targetName });
@@ -305,7 +304,7 @@ async function visit(tabId, url, targetName, settings, browser) {
       t: Date.now(),
       browser,
       target: targetName,
-      url,
+      url: (response && response.url) || url,
       detected: false,
       amount: null,
       score: 0,
@@ -313,6 +312,31 @@ async function visit(tabId, url, targetName, settings, browser) {
     });
   }
   return hits.length;
+}
+
+async function visit(tabId, url, targetName, settings, browser) {
+  await chrome.tabs.update(tabId, { url });
+  await waitForLoad(tabId);
+  return dwellAndScan(tabId, url, targetName, settings, browser);
+}
+
+/**
+ * 検索窓に地名を入れて実際に検索する。
+ *
+ * 「具体的に宿を調べると出やすい」という噂に合わせた動き。リンクを辿るだけ
+ * より人間の行動に近く、検索結果からは宿の詳細ページにも入りやすい。
+ */
+async function search(tabId, keyword, targetName, settings, browser) {
+  const response = await sendToTab(tabId, { type: 'search', keyword });
+  if (!response || !response.ok) {
+    console.info('検索を実行できませんでした:', response && response.reason);
+    return 0;
+  }
+  // 検索がページ遷移になるか画面内で完結するかは分からないので、
+  // 遷移を待ちつつ、待てなくても先に進む。
+  await Promise.race([waitForLoad(tabId, 15000), sleep(6000)]);
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  return dwellAndScan(tabId, (tab && tab.url) || '', `${targetName} > 検索:${keyword}`, settings, browser);
 }
 
 let patrolling = false;
@@ -342,7 +366,15 @@ async function patrol(reason) {
     tab = await chrome.tabs.create({ url: 'about:blank', active: false, pinned: true });
     await chrome.storage.local.set({ [PATROL_TAB_KEY]: tab.id });
 
-    await visit(tab.id, target.url, target.name || target.url, settings, browser);
+    const targetName = target.name || target.url;
+    await visit(tab.id, target.url, targetName, settings, browser);
+
+    // トップページを見たら、次は実際に地名で検索してみる。
+    const keywords = settings.searchKeywords || [];
+    if (settings.searchEnabled && keywords.length) {
+      const keyword = keywords[Math.floor(Math.random() * keywords.length)];
+      await search(tab.id, keyword, targetName, settings, browser);
+    }
 
     const wander = Math.max(0, Number(settings.wanderPages) || 0);
     for (let i = 0; i < wander; i++) {
@@ -350,7 +382,7 @@ async function patrol(reason) {
       const links = ((response && response.links) || []).filter(Settings.isAllowedUrl);
       const next = Settings.pickWeighted(links);
       if (!next) break;
-      await visit(tab.id, next, `${target.name || 'ターゲット'} > 散策`, settings, browser);
+      await visit(tab.id, next, `${targetName} > 散策`, settings, browser);
     }
     await chrome.storage.local.set({ lastPatrolAt: Date.now() });
   } catch (e) {
