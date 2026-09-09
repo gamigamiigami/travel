@@ -115,3 +115,21 @@ test('正規表現の状態が呼び出し間で漏れない', () => {
     assert.deepStrictEqual(amounts(scan(text)), [5000], `${i}回目`);
   }
 });
+
+test('表記ゆれ（円分・円記号・別の言い回し）も拾う', () => {
+  const cases = [
+    ['スペシャルクーポン 5,000円分OFF', 5000],
+    ['スペシャルクーポン ¥5,000 OFF', 5000],
+    ['スペシャルクーポン ￥3,000 割引', 3000],
+    ['割引クーポンが届きました 3,000円OFF', 3000],
+    ['クーポン当選！ 2,000円OFF', 2000],
+    ['クーポンを配布中 1,000円OFF', 1000],
+  ];
+  for (const [text, expected] of cases) {
+    assert.deepStrictEqual(amounts(scan(text)), [expected], text);
+  }
+});
+
+test('円記号だけの価格表示はクーポンとみなさない', () => {
+  assert.deepStrictEqual(scan('このホテル ¥5,000 から'), []);
+});

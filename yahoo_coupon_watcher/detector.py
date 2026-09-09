@@ -32,6 +32,11 @@ STRONG_KEYWORDS: tuple[str, ...] = (
     "クーポンをプレゼント",
     "あなただけのクーポン",
     "タイムセールクーポン",
+    "割引クーポン",
+    "クーポンが届",
+    "クーポンを配布",
+    "クーポン当選",
+    "クーポンを進呈",
 )
 
 # ポップアップの中だけを見るときに許す弱いキーワード。
@@ -39,7 +44,11 @@ WEAK_KEYWORDS: tuple[str, ...] = STRONG_KEYWORDS + ("クーポン", "coupon", "C
 
 # 「5,000円OFF」「5000円割引」「５０００円オフ」などを拾う。
 _AMOUNT_OFF = re.compile(
-    r"([0-9０-９][0-9０-９,，、]{0,9})\s*円\s*(?:OFF|off|Off|ＯＦＦ|オフ|割引|引き|引)",
+    r"([0-9０-９][0-9０-９,，、]{0,9})\s*円\s*(?:分\s*)?(?:OFF|off|Off|ＯＦＦ|オフ|割引|引き|引)",
+)
+# 「¥5,000 OFF」のように円記号で書かれる場合
+_AMOUNT_YEN_MARK = re.compile(
+    r"(?:¥|￥)\s*([0-9０-９][0-9０-９,，、]{0,9})\s*(?:OFF|off|Off|ＯＦＦ|オフ|割引|引き|引)?",
 )
 # 「OFF」等が付かない「5,000円クーポン」形式も拾う。
 _AMOUNT_COUPON = re.compile(
@@ -54,7 +63,12 @@ _TIME_LIMIT = re.compile(r"(?:残り|あと|以内|限定)?\s*([0-9]{1,4})\s*分
 # 通知には根拠も載せるので、誤検出したときに何が効いたのかがすぐ分かる。
 SCORE_RULES: tuple[tuple[str, int, str], ...] = (
     (r"スペシャルクーポン", 5, "スペシャルクーポン"),
-    (r"限定クーポン|あなただけのクーポン|クーポンプレゼント|クーポンをプレゼント", 4, "限定クーポン"),
+    (
+        r"限定クーポン|あなただけのクーポン|クーポンプレゼント|クーポンをプレゼント"
+        r"|割引クーポン|クーポンが届|クーポン当選",
+        4,
+        "限定クーポン",
+    ),
     (r"クーポンを?(?:獲得|ゲット|もらう|受け取)", 3, "獲得ボタン"),
     (r"時間限定|期間限定|今だけ", 3, "時間限定"),
     (r"クーポン", 1, "クーポン表記"),
@@ -222,7 +236,11 @@ def scan_text(
     whitelist = set(amounts_whitelist)
     hits: dict[str, CouponHit] = {}
 
-    for regex, needs_keyword in ((_AMOUNT_OFF, True), (_AMOUNT_COUPON, False)):
+    for regex, needs_keyword in (
+        (_AMOUNT_OFF, True),
+        (_AMOUNT_YEN_MARK, True),
+        (_AMOUNT_COUPON, False),
+    ):
         for match in regex.finditer(text):
             amount = _to_int(match.group(1))
             if amount is None:

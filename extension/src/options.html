@@ -146,6 +146,23 @@
   </div>
 </section>
 
+<section>
+  <h2>⑦ 検出されないときの診断</h2>
+  <p class="hint">
+    <b>クーポンが画面に出ているのに通知が来なかった場合</b>、そのページを開いたまま
+    下のボタンを押してください。ページの中身をテキストファイルに保存します。
+    これがあれば、なぜ拾えなかったのかを特定して直せます。
+  </p>
+  <div class="note">
+    ⚠️ 保存されるファイルには<b>そのページに表示されている文字がそのまま入ります</b>。
+    ログイン名などが含まれることがあるので、人に渡す前に中身を確認してください。
+  </div>
+  <div class="buttons">
+    <button class="primary" id="diagnose">このページの中身を保存する</button>
+  </div>
+  <div class="status" id="diagStatus"></div>
+</section>
+
 <script src="settings.js"></script>
 <script src="stats.js"></script>
 <script src="options.js"></script>

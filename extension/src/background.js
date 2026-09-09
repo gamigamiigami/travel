@@ -268,6 +268,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     Settings.getSettings().then((settings) => sendResponse({ settings }));
     return true;
   }
+  if (message.type === 'nearMiss') {
+    // 検出はしなかったが、それらしいものは見えていた、という記録。
+    // しきい値を下げるべきか判断する材料になる。
+    const hit = message.hit || {};
+    logActivity(
+      `惜しい：${(hit.amount || 0).toLocaleString()}円 を見つけましたが score=${hit.score} で` +
+        `しきい値${message.threshold}に届かず（根拠: ${(hit.reasons || []).join('・') || 'なし'}）`,
+      'warn'
+    );
+    return false;
+  }
   if (message.type === 'coupon') {
     handleCoupon(message, sender).catch((e) => console.error(e));
     return false;

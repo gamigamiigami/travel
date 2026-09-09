@@ -14,7 +14,8 @@
     'スペシャルクーポン', '限定クーポン', 'クーポンを獲得', 'クーポン獲得',
     'クーポンをゲット', 'クーポンをもらう', 'クーポンを受け取', 'クーポンプレゼント',
     'クーポンが当たり', 'クーポンをプレゼント', 'あなただけのクーポン',
-    'タイムセールクーポン',
+    'タイムセールクーポン', '割引クーポン', 'クーポンが届', 'クーポンを配布',
+    'クーポン当選', 'クーポンを進呈', 'クーポンGET', 'クーポンget',
   ];
   const WEAK_KEYWORDS = STRONG_KEYWORDS.concat(['クーポン', 'coupon', 'COUPON']);
 
@@ -22,7 +23,10 @@
   // lastIndex が呼び出し間で持ち越され、入れ子で使ったときに走査位置が
   // 巻き戻って無限ループになる。パターンは文字列で持ち、都度生成する。
   const P_AMOUNT_OFF =
-    '([0-9０-９][0-9０-９,，、]{0,9})\\s*円\\s*(?:OFF|off|Off|ＯＦＦ|オフ|割引|引き|引)';
+    '([0-9０-９][0-9０-９,，、]{0,9})\\s*円\\s*(?:分\\s*)?(?:OFF|off|Off|ＯＦＦ|オフ|割引|引き|引)';
+  // 「¥5,000 OFF」のように円記号で書かれる場合
+  const P_AMOUNT_YEN_MARK =
+    '(?:¥|￥)\\s*([0-9０-９][0-9０-９,，、]{0,9})\\s*(?:OFF|off|Off|ＯＦＦ|オフ|割引|引き|引)?';
   const P_AMOUNT_COUPON =
     '([0-9０-９][0-9０-９,，、]{0,9})\\s*円\\s*(?:分\\s*)?(?:の\\s*)?クーポン';
   // 有効時間。60分 / 90分 / 180分 の3種があるので分表記全般を拾う
@@ -33,7 +37,7 @@
 
   const SCORE_RULES = [
     [/スペシャルクーポン/, 5, 'スペシャルクーポン'],
-    [/限定クーポン|あなただけのクーポン|クーポンプレゼント|クーポンをプレゼント/, 4, '限定クーポン'],
+    [/限定クーポン|あなただけのクーポン|クーポンプレゼント|クーポンをプレゼント|割引クーポン|クーポンが届|クーポン当選/, 4, '限定クーポン'],
     [/クーポンを?(?:獲得|ゲット|もらう|受け取)/, 3, '獲得ボタン'],
     [/時間限定|期間限定|今だけ/, 3, '時間限定'],
     [/クーポン/, 1, 'クーポン表記'],
@@ -159,7 +163,11 @@
     const whitelist = new Set(opts.amountsWhitelist || []);
     const hits = new Map();
 
-    for (const [pattern, needsKeyword] of [[P_AMOUNT_OFF, true], [P_AMOUNT_COUPON, false]]) {
+    for (const [pattern, needsKeyword] of [
+      [P_AMOUNT_OFF, true],
+      [P_AMOUNT_YEN_MARK, true],
+      [P_AMOUNT_COUPON, false],
+    ]) {
       for (const match of text.matchAll(re(pattern))) {
         const amount = toInt(match[1]);
         if (amount === null) continue;

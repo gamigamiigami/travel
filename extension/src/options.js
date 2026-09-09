@@ -101,6 +101,163 @@ function escapeHtml(text) {
   );
 }
 
+/**
+ * ページの中身をそのまま吸い出す（全フレーム）。
+ *
+ * この関数は対象ページ側で実行されるため、拡張側の変数は一切使えない。
+ * 検出ロジックを通さず「生の材料」を集めるのが目的。
+ */
+function dumpFrame() {
+  const SELECTORS = [
+    "[role='dialog']", "[aria-modal='true']", 'dialog',
+    "[class*='oupon']", "[id*='oupon']", "[data-testid*='oupon']",
+    "[class*='odal']", "[class*='opup']", "[class*='alloon']", "[class*='oast']",
+  ];
+
+  const roots = [];
+  const walk = (root, depth) => {
+    if (depth > 4 || roots.length > 30) return;
+    let elements;
+    try {
+      elements = root.querySelectorAll('*');
+    } catch (e) {
+      return;
+    }
+    for (const element of elements) {
+      if (element.shadowRoot) {
+        roots.push(element.shadowRoot);
+        walk(element.shadowRoot, depth + 1);
+      }
+    }
+  };
+  try {
+    walk(document, 0);
+  } catch (e) {
+    /* shadow root が辿れなくても本文は出す */
+  }
+
+  const blocks = [];
+  const seen = new Set();
+  for (const root of [document].concat(roots)) {
+    for (const selector of SELECTORS) {
+      let elements;
+      try {
+        elements = root.querySelectorAll(selector);
+      } catch (e) {
+        continue;
+      }
+      for (const element of Array.from(elements).slice(0, 8)) {
+        if (seen.has(element)) continue;
+        seen.add(element);
+        const text = (element.innerText || '').slice(0, 2000);
+        if (!text.trim()) continue;
+        blocks.push({
+          selector,
+          visible: element.getClientRects().length > 0,
+          className: String(element.className || '').slice(0, 150),
+          text,
+        });
+      }
+    }
+  }
+
+  const labels = [];
+  try {
+    const labelled = document.querySelectorAll('img[alt], [aria-label], [title]');
+    for (const node of Array.from(labelled).slice(0, 150)) {
+      const label =
+        node.getAttribute('alt') || node.getAttribute('aria-label') || node.getAttribute('title');
+      if (label && /クーポン|OFF|オフ|円|coupon/i.test(label)) labels.push(label.slice(0, 200));
+    }
+  } catch (e) {
+    /* 属性が取れなくても続行 */
+  }
+
+  return {
+    url: location.href,
+    title: document.title,
+    isTopFrame: window.top === window,
+    shadowRootCount: roots.length,
+    blocks,
+    labels,
+    bodyText: ((document.body && document.body.innerText) || '').slice(0, 15000),
+  };
+}
+
+function formatDump(frames) {
+  const lines = [
+    '===== Yahoo!トラベル クーポンウォッチャー 診断データ =====',
+    '保存日時: ' + new Date().toLocaleString('ja-JP'),
+    'フレーム数: ' + frames.length,
+    '',
+  ];
+  frames.forEach((frame, index) => {
+    if (!frame) return;
+    lines.push('#'.repeat(60));
+    lines.push(`[フレーム ${index + 1}] ${frame.isTopFrame ? '(メイン)' : '(iframe)'}`);
+    lines.push('URL   : ' + frame.url);
+    lines.push('タイトル: ' + frame.title);
+    lines.push('shadow root の数: ' + frame.shadowRootCount);
+    lines.push('');
+    lines.push('--- ポップアップらしき要素 (' + frame.blocks.length + '件) ---');
+    if (!frame.blocks.length) lines.push('(なし)');
+    frame.blocks.forEach((block, i) => {
+      lines.push(`[${i + 1}] ${block.selector}  表示中=${block.visible}`);
+      lines.push(`    class: ${block.className}`);
+      lines.push('    ' + block.text.split('\n').join('\n    '));
+      lines.push('');
+    });
+    lines.push('--- クーポンらしき alt / aria-label (' + frame.labels.length + '件) ---');
+    lines.push(frame.labels.length ? frame.labels.join('\n') : '(なし)');
+    lines.push('');
+    lines.push('--- ページ全体のテキスト ---');
+    lines.push(frame.bodyText);
+    lines.push('');
+  });
+  return lines.join('\n');
+}
+
+async function saveDiagnostics() {
+  const tabs = await chrome.tabs.query({ url: ['*://*.travel.yahoo.co.jp/*'] });
+  if (!tabs.length) {
+    showStatus('diagStatus', 'Yahoo!トラベルのタブが見つかりません。開いた状態で押してください。', false);
+    return;
+  }
+  const tab = tabs.sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0))[0];
+
+  let results;
+  try {
+    results = await chrome.scripting.executeScript({
+      target: { tabId: tab.id, allFrames: true },
+      func: dumpFrame,
+    });
+  } catch (e) {
+    showStatus('diagStatus', '読み取れませんでした: ' + ((e && e.message) || e), false);
+    return;
+  }
+
+  const frames = (results || []).map((r) => r && r.result).filter(Boolean);
+  if (!frames.length) {
+    showStatus('diagStatus', '中身を取得できませんでした。', false);
+    return;
+  }
+
+  const blob = new Blob(['\ufeff' + formatDump(frames)], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `coupon-diagnostics-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.txt`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+
+  const total = frames.reduce((sum, f) => sum + f.blocks.length, 0);
+  showStatus(
+    'diagStatus',
+    `保存しました（${frames.length}フレーム／ポップアップ候補${total}件）。中身を確認のうえ送ってください。`,
+    true
+  );
+}
+
 function clockOf(timestamp) {
   const date = new Date(timestamp);
   return (
@@ -227,6 +384,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     $('watchPatrol').disabled = false;
     $('watchPatrol').textContent = '巡回を目で見る（タブを表示して1回実行）';
     await renderActivity();
+  });
+
+  $('diagnose').addEventListener('click', async () => {
+    showStatus('diagStatus', '読み取り中…', true);
+    await saveDiagnostics();
   });
 
   $('clearActivity').addEventListener('click', async () => {

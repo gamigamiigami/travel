@@ -12,6 +12,8 @@
   ],
   "host_permissions": [
     "*://*.travel.yahoo.co.jp/*",
+    "*://*.yahoo.co.jp/*",
+    "*://*.yimg.jp/*",
     "https://ntfy.sh/*",
     "https://discord.com/api/webhooks/*"
   ],
@@ -21,7 +23,8 @@
   "content_scripts": [
     {
       "matches": [
-        "*://*.travel.yahoo.co.jp/*"
+        "*://*.yahoo.co.jp/*",
+        "*://*.yimg.jp/*"
       ],
       "all_frames": true,
       "js": [

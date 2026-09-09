@@ -151,3 +151,24 @@ def test_signature_ignores_code_so_one_coupon_notifies_once():
     with_code = CouponHit(amount=5000, source="popup", snippet="", code="X1", browser="edge")
     without = CouponHit(amount=5000, source="page", snippet="", browser="edge")
     assert with_code.signature == without.signature
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("スペシャルクーポン 5,000円分OFF", 5000),
+        ("スペシャルクーポン ¥5,000 OFF", 5000),
+        ("スペシャルクーポン ￥3,000 割引", 3000),
+        ("割引クーポンが届きました 3,000円OFF", 3000),
+        ("クーポン当選！ 2,000円OFF", 2000),
+        ("クーポンを配布中 1,000円OFF", 1000),
+    ],
+)
+def test_wording_and_format_variants(text, expected):
+    """実際に取り逃がした事例を踏まえて表記ゆれを広げた分の回帰テスト。"""
+    assert [h.amount for h in scan_text(text)] == [expected]
+
+
+def test_yen_mark_alone_is_not_enough():
+    # 円記号だけの価格表示はクーポンではない
+    assert scan_text("このホテル ¥5,000 から") == []

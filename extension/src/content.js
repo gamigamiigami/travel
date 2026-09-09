@@ -12,6 +12,26 @@
   if (globalThis.__ytCouponWatcherLoaded) return;
   globalThis.__ytCouponWatcherLoaded = true;
 
+  // クーポンのポップアップが travel.yahoo.co.jp 以外のドメインの iframe で
+  // 描画されている場合に備え、Yahoo系ドメイン全体に読み込まれる設定にしてある。
+  // ただし実際に動くのは「Yahoo!トラベルの中にいるフレーム」だけに限る。
+  if (!isInsideYahooTravel()) return;
+
+  function isInsideYahooTravel() {
+    const isTravel = (host) => /(^|\.)travel\.yahoo\.co\.jp$/i.test(host);
+    if (isTravel(location.hostname)) return true;
+    try {
+      const ancestors = location.ancestorOrigins;
+      if (!ancestors) return false;
+      for (let i = 0; i < ancestors.length; i++) {
+        if (isTravel(new URL(ancestors[i]).hostname)) return true;
+      }
+    } catch (e) {
+      return false;
+    }
+    return false;
+  }
+
   const D = globalThis.CouponDetector;
   if (!D) return;
 
@@ -58,10 +78,60 @@
 
   let settings = null;
   let lastScanAt = 0;
+  const reportedNearMiss = new Set();
   let debounceTimer = null;
   const claimed = new Set();
 
   const isTopFrame = window.top === window;
+
+  /**
+   * Shadow DOM の中を集める。
+   *
+   * ポップアップが shadow root の中に作られていると、document への
+   * querySelectorAll も body.innerText も中身に届かない。ここを見ないと
+   * 「画面には出ているのに検出できない」が起きる。
+   */
+  function shadowRoots(limit) {
+    const roots = [];
+    const walk = (root, depth) => {
+      if (depth > 5 || roots.length >= (limit || 40)) return;
+      let elements;
+      try {
+        elements = root.querySelectorAll('*');
+      } catch (e) {
+        return;
+      }
+      for (const element of elements) {
+        if (element.shadowRoot) {
+          roots.push(element.shadowRoot);
+          walk(element.shadowRoot, depth + 1);
+          if (roots.length >= (limit || 40)) return;
+        }
+      }
+    };
+    walk(document, 0);
+    return roots;
+  }
+
+  /** 要素そのものの文字に加えて、画像のaltや aria-label も拾う。 */
+  function textWithLabels(element) {
+    let text = element.innerText || '';
+    try {
+      const labelled = element.querySelectorAll('img[alt], [aria-label], [title]');
+      const labels = [];
+      for (const node of Array.from(labelled).slice(0, 40)) {
+        const label =
+          node.getAttribute('alt') ||
+          node.getAttribute('aria-label') ||
+          node.getAttribute('title');
+        if (label && label.length <= 200) labels.push(label);
+      }
+      if (labels.length) text += '\n' + labels.join('\n');
+    } catch (e) {
+      /* 属性が取れなくても本文だけで判定する */
+    }
+    return text;
+  }
 
   function isVisible(element) {
     if (!element) return false;
@@ -83,44 +153,53 @@
   }
 
   /** ポップアップらしき要素の中を、ゆるい条件で見る。 */
-  function scanPopups() {
+  function scanPopups(minScore) {
     const hits = [];
     const seen = new Set();
-    for (const selector of POPUP_SELECTORS) {
-      let elements;
-      try {
-        elements = document.querySelectorAll(selector);
-      } catch (e) {
-        continue;
-      }
-      for (const element of Array.from(elements).slice(0, 8)) {
-        if (seen.has(element) || !isVisible(element)) continue;
-        seen.add(element);
-        const text = element.innerText;
-        if (!text || text.length > MAX_POPUP_TEXT) continue;
-        const found = D.scanText(
-          text,
-          Object.assign(baseOptions('popup'), {
-            strict: false,
-            minScore: settings.minScorePopup,
-          })
-        );
-        for (const hit of found) hits.push({ hit, element });
+    const roots = [document].concat(shadowRoots());
+    for (const root of roots) {
+      for (const selector of POPUP_SELECTORS) {
+        let elements;
+        try {
+          elements = root.querySelectorAll(selector);
+        } catch (e) {
+          continue;
+        }
+        for (const element of Array.from(elements).slice(0, 8)) {
+          if (seen.has(element) || !isVisible(element)) continue;
+          seen.add(element);
+          const text = textWithLabels(element);
+          if (!text || text.length > MAX_POPUP_TEXT) continue;
+          const found = D.scanText(
+            text,
+            Object.assign(baseOptions('popup'), { strict: false, minScore })
+          );
+          for (const hit of found) hits.push({ hit, element });
+        }
       }
     }
     return hits;
   }
 
   /** ページ全体を、強いキーワード必須の厳しい条件で見る。 */
-  function scanWholePage() {
-    const text = (document.body && document.body.innerText) || '';
+  function pageText() {
+    let text = (document.body && document.body.innerText) || '';
+    for (const root of shadowRoots(20)) {
+      try {
+        text += '\n' + (root.textContent || '');
+      } catch (e) {
+        /* 読めない shadow root は飛ばす */
+      }
+    }
+    return text.slice(0, MAX_BODY_TEXT);
+  }
+
+  function scanWholePage(minScore) {
+    const text = pageText();
     if (!text) return [];
     const found = D.scanText(
-      text.slice(0, MAX_BODY_TEXT),
-      Object.assign(baseOptions('page'), {
-        strict: true,
-        minScore: settings.minScorePage,
-      })
+      text,
+      Object.assign(baseOptions('page'), { strict: true, minScore })
     );
     return found.map((hit) => ({ hit, element: null }));
   }
@@ -164,11 +243,30 @@
     if (reason !== 'manual' && now - lastScanAt < SCAN_COOLDOWN_MS) return [];
     lastScanAt = now;
 
-    let results;
+    // いったん「しきい値なし」で全部拾い、あとで足切りする。
+    // 足切りされたものも記録しておけば「惜しかった」が分かり、調整できる。
+    let candidates;
     try {
-      results = best(scanPopups().concat(scanWholePage()));
+      candidates = best(scanPopups(0).concat(scanWholePage(0)));
     } catch (e) {
       return [];
+    }
+
+    const threshold = (hit) =>
+      hit.source === 'popup' ? settings.minScorePopup : settings.minScorePage;
+    const results = candidates.filter(({ hit }) => hit.score >= threshold(hit));
+    const nearMisses = candidates.filter(({ hit }) => hit.score < threshold(hit));
+
+    for (const { hit } of nearMisses) {
+      const key = `${hit.amount}|${hit.score}`;
+      if (reportedNearMiss.has(key)) continue;
+      reportedNearMiss.add(key);
+      chrome.runtime.sendMessage({
+        type: 'nearMiss',
+        hit,
+        threshold: threshold(hit),
+        pageUrl: location.href,
+      }).catch(() => {});
     }
 
     for (const { hit, element } of results) {
