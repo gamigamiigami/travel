@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>クーポンウォッチャー設定</title>
+<link rel="stylesheet" href="common.css">
+<style>
+  body { max-width: 760px; margin: 0 auto; padding: 24px 20px 60px; }
+</style>
+</head>
+<body>
+<h1>Yahoo!トラベル スペシャルクーポン ウォッチャー</h1>
+<p class="hint">設定は変更するとすぐ保存されます。</p>
+
+<section>
+  <h2>① スマホで受け取る（ntfy）</h2>
+  <p class="hint">
+    スマホに <b>ntfy</b> アプリを入れて、下のトピック名を購読するだけです。
+    アカウント登録はいりません。
+  </p>
+  <div class="topic">
+    <code id="topic">—</code>
+    <button id="copyTopic">コピー</button>
+    <button id="newTopic">作り直す</button>
+  </div>
+  <div class="note">
+    <b>手順</b><br>
+    1. スマホに ntfy アプリを入れる（App Store / Google Play で「ntfy」）<br>
+    2. アプリの「＋」を押す<br>
+    3. 上のトピック名を貼り付けて「Subscribe」<br>
+    以上です。<br><br>
+    ⚠️ トピック名は事実上のパスワードです。人に教えないでください。
+    漏れたと思ったら「作り直す」を押せば新しい名前になります（スマホ側も購読し直してください）。
+  </div>
+  <div class="buttons">
+    <button class="primary" id="test">テスト通知を送る</button>
+  </div>
+  <div class="status" id="testStatus"></div>
+</section>
+
+<section>
+  <h2>② 通知先</h2>
+  <label class="row"><input type="checkbox" id="notifyDesktop"> このPCに通知する（ブラウザの通知）</label>
+  <label class="row"><input type="checkbox" id="notifyNtfy"> スマホに通知する（ntfy）</label>
+  <label class="row"><input type="checkbox" id="notifyDiscord"> Discordに通知する</label>
+  <label class="field" id="discordField">
+    <span>Discord Webhook URL</span>
+    <input type="text" id="discordWebhookUrl" placeholder="https://discord.com/api/webhooks/...">
+  </label>
+</section>
+
+<section>
+  <h2>③ 巡回</h2>
+  <label class="row"><input type="checkbox" id="enabled"> このツールを動かす</label>
+  <label class="row"><input type="checkbox" id="patrolEnabled"> 自動でページを巡回する</label>
+  <p class="hint">
+    オフにしても、あなたがYahoo!トラベルを見ている間の監視は続きます。
+  </p>
+  <div class="grid2">
+    <label class="field"><span>巡回の間隔（分）</span><input type="number" id="intervalMinutes" min="5" max="180"></label>
+    <label class="field"><span>1回に潜るページ数</span><input type="number" id="wanderPages" min="0" max="10"></label>
+    <label class="field"><span>1ページを見る秒数</span><input type="number" id="dwellSeconds" min="3" max="60"></label>
+    <label class="field"><span>1日の上限（回）</span><input type="number" id="maxPatrolsPerDay" min="0" max="200"></label>
+    <label class="field"><span>停止する時間帯：開始</span><input type="number" id="quietStartHour" min="0" max="23"></label>
+    <label class="field"><span>停止する時間帯：終了</span><input type="number" id="quietEndHour" min="0" max="23"></label>
+  </div>
+  <label class="field">
+    <span>毎回見に行くページ（1行に1つ。「名前 &lt;TAB or 半角スペース&gt; URL」でも可）</span>
+    <textarea id="targets"></textarea>
+  </label>
+  <p class="hint">
+    実際にクーポンが出たページを見つけたら、ここに足すのが一番効きます。
+    Yahoo!トラベル以外のURLと、予約・決済に関わるURLは自動的に除外されます。
+  </p>
+</section>
+
+<section>
+  <h2>④ 検出</h2>
+  <div class="grid2">
+    <label class="field"><span>この金額未満は無視（円）</span><input type="number" id="minAmount" min="0" step="100"></label>
+    <label class="field"><span>同じクーポンを再通知しない時間（分）</span><input type="number" id="dedupeMinutes" min="1" max="1440"></label>
+    <label class="field"><span>しきい値：ページ全体（厳しめ）</span><input type="number" id="minScorePage" min="0" max="30"></label>
+    <label class="field"><span>しきい値：ポップアップ内（緩め）</span><input type="number" id="minScorePopup" min="0" max="30"></label>
+  </div>
+  <label class="field">
+    <span>この金額だけ通知（カンマ区切り。空なら上の下限で判定）</span>
+    <input type="text" id="amountsWhitelist" placeholder="例: 3000,5000,50000">
+  </label>
+  <label class="field">
+    <span>この文言を含むものは無視（1行に1つ。正規表現）</span>
+    <textarea id="ignorePatterns" placeholder="誤検知が出たら、その文言をここに足してください"></textarea>
+  </label>
+  <label class="row"><input type="checkbox" id="autoClaim"> 「クーポンを獲得」ボタンがあれば自動で押す</label>
+  <p class="hint">
+    「予約」「決済」「確定」などの語を含むボタンは、設定に関係なく絶対に押しません。
+  </p>
+</section>
+
+<section>
+  <h2>⑤ 出現傾向</h2>
+  <p class="hint">
+    検出しなかった回も記録しているので、分母つきの出現率が出ます。
+  </p>
+  <div id="stats"></div>
+  <div class="buttons">
+    <button id="exportCsv">CSVで書き出す</button>
+    <button id="clearHistory">履歴を消す</button>
+  </div>
+</section>
+
+<script src="settings.js"></script>
+<script src="stats.js"></script>
+<script src="options.js"></script>
+</body>
+</html>

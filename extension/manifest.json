@@ -1,0 +1,50 @@
+{
+  "manifest_version": 3,
+  "name": "Yahoo!トラベル スペシャルクーポン ウォッチャー",
+  "version": "2.0.0",
+  "description": "Yahoo!トラベルのスペシャルクーポン（1,000〜50,000円OFF）が出たら、PCとスマホに通知します。",
+  "permissions": [
+    "storage",
+    "alarms",
+    "notifications",
+    "tabs"
+  ],
+  "host_permissions": [
+    "*://*.travel.yahoo.co.jp/*",
+    "https://ntfy.sh/*",
+    "https://discord.com/api/webhooks/*"
+  ],
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.travel.yahoo.co.jp/*"
+      ],
+      "all_frames": true,
+      "js": [
+        "src/detector.js",
+        "src/content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_page": "src/options.html",
+  "action": {
+    "default_popup": "src/popup.html",
+    "default_title": "クーポンウォッチャー",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

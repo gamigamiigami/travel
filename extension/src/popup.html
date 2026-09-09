@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>クーポンウォッチャー</title>
+<link rel="stylesheet" href="common.css">
+<style>
+  body { width: 300px; padding: 14px; }
+  section { padding: 12px; margin-bottom: 10px; }
+  .big { font-size: 15px; font-weight: 600; }
+  dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; font-size: 12.5px; }
+  dt { color: var(--muted); }
+  dd { margin: 0; text-align: right; }
+</style>
+</head>
+<body>
+<label class="row big"><input type="checkbox" id="enabled"> 見張りをONにする</label>
+<section>
+  <dl>
+    <dt>今日の巡回</dt><dd id="daily">—</dd>
+    <dt>前回の巡回</dt><dd id="last">—</dd>
+    <dt>次の巡回</dt><dd id="next">—</dd>
+    <dt>直近の検出</dt><dd id="hit">—</dd>
+  </dl>
+</section>
+<div class="buttons">
+  <button class="primary" id="now">いま巡回する</button>
+  <button id="scan">このページを調べる</button>
+</div>
+<div class="buttons">
+  <button id="options">設定と出現傾向</button>
+</div>
+<div class="status" id="status"></div>
+<script src="settings.js"></script>
+<script src="popup.js"></script>
+</body>
+</html>
