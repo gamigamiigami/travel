@@ -1,0 +1,16 @@
+# 個人設定・認証情報（絶対にコミットしない）
+config.yaml
+
+# ブラウザプロファイル（Cookie＝ログイン情報が入る）
+profiles/
+
+# 実行時データ
+data/
+logs/
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/

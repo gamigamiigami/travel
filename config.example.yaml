@@ -1,0 +1,125 @@
+# ------------------------------------------------------------------
+# Yahoo!トラベル スペシャルクーポン ウォッチャー 設定ファイル
+# このファイルを config.yaml という名前でコピーして編集してください。
+# config.yaml は .gitignore 済みです（トピック名やパスワードが入るため）。
+# ------------------------------------------------------------------
+
+notify:
+  # ntfy / discord / email / console から選ぶ
+  provider: ntfy
+
+  ntfy:
+    server: https://ntfy.sh
+    # ここは「他人に推測されない、長めのランダム文字列」にしてください。
+    # トピック名を知っている人は誰でも通知を読めます。
+    topic: "yahoo-coupon-CHANGEME-a7f39c21"
+    priority: 5          # 5=最優先。スマホのサイレントを貫きたいとき用
+    attach_screenshot: true
+
+  discord:
+    webhook_url: ""
+
+  email:
+    smtp_host: smtp.gmail.com
+    smtp_port: 465
+    username: "あなたのアドレス@gmail.com"
+    password: "アプリパスワード16桁"   # Gmailは通常のパスワードでは送れません
+    from_addr: ""
+    to_addr: "受け取りたいアドレス@example.com"
+
+  # 通知先に加えてコンソール（ログ）にも出す
+  also_console: true
+
+# Edge と Chrome は別プロファイル＝別の抽選枠として回します
+browsers:
+  - edge
+  - chrome
+
+crawl:
+  # true にするとウィンドウが出ずに裏で動きます（常駐向け）
+  headless: false
+  start_url: https://travel.yahoo.co.jp/
+
+  # 1ラウンドで何ページ見るか [最小, 最大]
+  pages_per_round: [4, 8]
+  # 次のラウンドまで何分空けるか [最小, 最大]
+  # ★短くしすぎないこと。サイトへの迷惑になりますし、弾かれる原因にもなります。
+  interval_minutes: [12, 25]
+  # 1ページを何秒眺めるか [最小, 最大]
+  page_dwell_seconds: [6, 18]
+  scroll_steps: [2, 5]
+  nav_timeout_seconds: 45
+
+  # この時間帯は巡回しない [開始時, 終了時] （深夜の無駄アクセスを避ける）
+  quiet_hours: [1, 7]
+  # 0 = 無制限に回し続ける
+  max_rounds: 0
+
+  allowed_host_suffix: travel.yahoo.co.jp
+
+  # 絶対に踏まないURL。予約確定や決済に触れないための安全装置です。
+  # 消さないでください。
+  blocked_url_patterns:
+    - "/reserve"
+    - "/reservation"
+    - "/booking"
+    - "/payment"
+    - "/order"
+    - "/cart"
+    - "/checkout"
+    - "/confirm"
+    - "/settlement"
+    - "logout"
+    - "login"
+    - "signin"
+    - "account"
+    - "mypage"
+    - "edit\\.yahoo"
+    - "login\\.yahoo"
+    - "accounts\\.yahoo"
+    - "/review/(post|write)"
+    - "/inquiry"
+    - "/contact"
+    - "/cancel"
+
+  # 「具体的に宿を調べている」動きを作るため、この形のリンクを優先して選びます
+  preferred_url_patterns:
+    - "/dp/"
+    - "/hotel"
+    - "/domestic"
+    - "/area"
+    - "/search"
+    - "/onsen"
+    - "/theme"
+    - "/ranking"
+
+detect:
+  min_amount: 1000        # これ未満の割引は通知しない
+  max_amount: 100000
+  # 特定の金額だけ通知したいときに使う（例: [3000, 5000, 50000]）。
+  # 空のままなら min_amount / max_amount の範囲で判定します。
+  amounts_whitelist: []
+
+  # 「クーポンを獲得」ボタンがあれば自動で押す
+  auto_claim: true
+  claim_button_texts:
+    - "クーポンを獲得"
+    - "獲得する"
+    - "クーポンをもらう"
+    - "受け取る"
+    - "クーポンをゲット"
+    - "ゲットする"
+    - "今すぐ獲得"
+
+  # 誤検知が出たら、その文言を正規表現でここに足すと黙らせられます
+  ignore_patterns: []
+
+  # 同じクーポンを何分間は再通知しないか（スペシャルクーポンの有効期限が180分）
+  dedupe_minutes: 180
+  screenshot: true
+  network_scan: true      # クーポンAPIのJSONも覗く（DOM変更に強い）
+
+paths:
+  profiles_dir: profiles
+  data_dir: data
+  logs_dir: logs
