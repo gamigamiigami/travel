@@ -8,6 +8,10 @@
 (function () {
   'use strict';
 
+  // popup からの再注入などで2回読み込まれても、監視を二重に走らせない。
+  if (globalThis.__ytCouponWatcherLoaded) return;
+  globalThis.__ytCouponWatcherLoaded = true;
+
   const D = globalThis.CouponDetector;
   if (!D) return;
 
@@ -184,12 +188,22 @@
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'scan') {
-      const results = scan('manual', message.targetName);
-      sendResponse({
-        ok: true,
-        hits: results.map((r) => r.hit),
-        title: document.title,
-        url: location.href,
+      // 注入直後は設定をまだ持っていないことがある。その場合は取ってから調べる。
+      const run = settings
+        ? Promise.resolve()
+        : chrome.runtime.sendMessage({ type: 'getSettings' })
+            .then((response) => {
+              settings = response && response.settings;
+            })
+            .catch(() => {});
+      run.then(() => {
+        const results = scan('manual', message.targetName);
+        sendResponse({
+          ok: true,
+          hits: results.map((r) => r.hit),
+          title: document.title,
+          url: location.href,
+        });
       });
       return true;
     }

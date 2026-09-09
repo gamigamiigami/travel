@@ -8,7 +8,7 @@ const NUMBERS = [
   'quietStartHour', 'quietEndHour', 'minAmount', 'dedupeMinutes',
   'minScorePage', 'minScorePopup',
 ];
-const TEXTS = ['discordWebhookUrl'];
+const TEXTS = ['discordWebhookUrl', 'ntfyTopic'];
 
 const $ = (id) => document.getElementById(id);
 
@@ -42,7 +42,6 @@ async function load() {
   for (const id of CHECKBOXES) $(id).checked = !!settings[id];
   for (const id of NUMBERS) $(id).value = settings[id];
   for (const id of TEXTS) $(id).value = settings[id] || '';
-  $('topic').textContent = settings.ntfyTopic || '（未設定）';
   $('targets').value = formatTargets(settings.targets);
   $('amountsWhitelist').value = (settings.amountsWhitelist || []).join(',');
   $('ignorePatterns').value = (settings.ignorePatterns || []).join('\n');
@@ -55,6 +54,7 @@ async function save() {
   for (const id of CHECKBOXES) patch[id] = $(id).checked;
   for (const id of NUMBERS) patch[id] = Number($(id).value);
   for (const id of TEXTS) patch[id] = $(id).value.trim();
+  patch.ntfyTopic = patch.ntfyTopic.trim();
   patch.targets = parseTargets($('targets').value);
   patch.amountsWhitelist = parseAmounts($('amountsWhitelist').value);
   patch.ignorePatterns = $('ignorePatterns').value.split('\n').map((s) => s.trim()).filter(Boolean);
@@ -62,6 +62,9 @@ async function save() {
 
   await Settings.saveSettings(patch);
   $('discordField').style.display = patch.notifyDiscord ? '' : 'none';
+  if (patch.notifyNtfy && !patch.ntfyTopic) {
+    showStatus('testStatus', 'トピック名が空です。スマホ通知は送られません。', false);
+  }
   await chrome.runtime.sendMessage({ type: 'rescheduleAlarm' }).catch(() => {});
 }
 
@@ -139,14 +142,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   $('copyTopic').addEventListener('click', async () => {
-    await navigator.clipboard.writeText($('topic').textContent);
-    showStatus('testStatus', 'トピック名をコピーしました。ntfyアプリで貼り付けてください。', true);
+    const topic = $('ntfyTopic').value.trim();
+    if (!topic) {
+      showStatus('testStatus', 'トピック名が空です。', false);
+      return;
+    }
+    await navigator.clipboard.writeText(topic);
+    showStatus('testStatus', 'トピック名をコピーしました。ntfyアプリや2台目のブラウザで貼り付けてください。', true);
   });
 
   $('newTopic').addEventListener('click', async () => {
     if (!confirm('トピック名を作り直しますか？\nスマホのntfyアプリでも購読し直しが必要になります。')) return;
     const settings = await Settings.saveSettings({ ntfyTopic: Settings.randomTopic() });
-    $('topic').textContent = settings.ntfyTopic;
+    $('ntfyTopic').value = settings.ntfyTopic;
     showStatus('testStatus', '新しいトピック名を作りました。スマホ側も購読し直してください。', true);
   });
 

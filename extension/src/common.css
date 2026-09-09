@@ -43,10 +43,12 @@ button.primary { background: var(--accent); color: var(--accent-fg); border-colo
 .topic {
   display: flex; gap: 8px; align-items: center; margin: 8px 0;
 }
-.topic code {
+.topic input {
   flex: 1; padding: 9px 10px; background: var(--bg); border: 1px dashed var(--accent);
-  border-radius: 6px; font-size: 14px; font-weight: 600; word-break: break-all;
+  border-radius: 6px; font-size: 14px; font-weight: 600;
+  font-family: ui-monospace, Consolas, monospace;
 }
+.topic button { white-space: nowrap; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 14px; }
 th, td { padding: 5px 8px; border-bottom: 1px solid var(--line); text-align: right; }
 th:first-child, td:first-child { text-align: left; }
