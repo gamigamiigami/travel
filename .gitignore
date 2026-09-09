@@ -1,5 +1,6 @@
 # 個人設定・認証情報（絶対にコミットしない）
 config.yaml
+.env
 
 # ブラウザプロファイル（Cookie＝ログイン情報が入る）
 profiles/

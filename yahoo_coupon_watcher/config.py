@@ -3,14 +3,28 @@
 from __future__ import annotations
 
 import copy
+import os
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+# .env でも設定できる項目。環境変数のほうが優先される。
+# パスワードやトピック名を config.yaml に書かずに済ませるための仕組み。
+ENV_OVERRIDES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("NTFY_TOPIC", ("notify", "ntfy", "topic")),
+    ("NTFY_SERVER", ("notify", "ntfy", "server")),
+    ("DISCORD_WEBHOOK_URL", ("notify", "discord", "webhook_url")),
+    ("EMAIL_USERNAME", ("notify", "email", "username")),
+    ("EMAIL_PASSWORD", ("notify", "email", "password")),
+    ("EMAIL_TO", ("notify", "email", "to_addr")),
+    ("EMAIL_SMTP_HOST", ("notify", "email", "smtp_host")),
+)
+
 DEFAULTS: dict[str, Any] = {
     "notify": {
-        "provider": "ntfy",
+        # 複数同時に有効にできる: ntfy / discord / email / windows / console
+        "providers": ["ntfy", "windows"],
         "also_console": True,
         "ntfy": {
             "server": "https://ntfy.sh",
@@ -27,11 +41,18 @@ DEFAULTS: dict[str, Any] = {
             "from_addr": "",
             "to_addr": "",
         },
+        "windows": {"app_id": "Yahoo Travel Coupon Watcher", "enabled": True},
     },
     "browsers": ["edge", "chrome"],
     "crawl": {
         "headless": False,
         "start_url": "https://travel.yahoo.co.jp/",
+        # 毎回かならず見に行くページ。実際にクーポンが出たページを足していくと強い。
+        "targets": [{"name": "トップページ", "url": "https://travel.yahoo.co.jp/"}],
+        # 各ターゲットから何ページぶんリンクを辿って潜るか [最小, 最大]
+        "wander_pages_per_target": [2, 4],
+        # 1日あたりの巡回ラウンド上限（アクセスしすぎの歯止め）
+        "max_rounds_per_day": 40,
         "pages_per_round": [4, 8],
         "interval_minutes": [12, 25],
         "page_dwell_seconds": [6, 18],
@@ -64,6 +85,9 @@ DEFAULTS: dict[str, Any] = {
             "クーポンをゲット", "ゲットする", "今すぐ獲得",
         ],
         "ignore_patterns": [],
+        # 何点以上でクーポンとみなすか。ページ全体は厳しく、ポップアップ内は緩く。
+        "min_score_page": 7,
+        "min_score_popup": 4,
         "dedupe_minutes": 180,
         "screenshot": True,
         # クーポンAPIのレスポンス(JSON)も覗くかどうか。DOMが変わっても拾えるので既定でON。
@@ -74,6 +98,9 @@ DEFAULTS: dict[str, Any] = {
         "data_dir": "data",
         "logs_dir": "logs",
     },
+    # 検出の有無にかかわらず全チェック結果をCSVに残す。
+    # 曜日・時間帯・ブラウザ別の出現率を後から集計するためのデータ。
+    "history": {"enabled": True, "file": "history.csv"},
 }
 
 
@@ -91,7 +118,42 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return merged
 
 
-def load_config(path: str | Path = "config.yaml") -> dict[str, Any]:
+def load_dotenv(path: str | Path = ".env") -> dict[str, str]:
+    """.env を読んで os.environ に載せる（既存の環境変数は上書きしない）。
+
+    外部ライブラリを足したくないので最小限の実装にしてある。
+    KEY=VALUE 形式、# 始まりはコメント、値のクォートは剥がす。
+    """
+    path = Path(path)
+    loaded: dict[str, str] = {}
+    if not path.exists():
+        return loaded
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if not key:
+            continue
+        loaded[key] = value
+        os.environ.setdefault(key, value)
+    return loaded
+
+
+def _apply_env_overrides(config: dict[str, Any]) -> None:
+    for env_name, path in ENV_OVERRIDES:
+        value = os.environ.get(env_name)
+        if value in (None, ""):
+            continue
+        node = config
+        for part in path[:-1]:
+            node = node.setdefault(part, {})
+        node[path[-1]] = value
+
+
+def load_config(path: str | Path = "config.yaml", env_path: str | Path = ".env") -> dict[str, Any]:
     path = Path(path)
     if not path.exists():
         raise ConfigError(
@@ -101,24 +163,41 @@ def load_config(path: str | Path = "config.yaml") -> dict[str, Any]:
         user_config = yaml.safe_load(fh) or {}
     if not isinstance(user_config, dict):
         raise ConfigError(f"{path} の形式が不正です（トップレベルはマッピングにしてください）。")
+    load_dotenv(env_path)
     config = _deep_merge(DEFAULTS, user_config)
+    _apply_env_overrides(config)
     _validate(config)
     return config
 
 
+KNOWN_PROVIDERS = {"ntfy", "discord", "email", "windows", "console"}
+
+
 def _validate(config: dict[str, Any]) -> None:
-    provider = config["notify"]["provider"]
-    if provider not in {"ntfy", "discord", "email", "console"}:
-        raise ConfigError(f"notify.provider が不正です: {provider}")
-    if provider == "ntfy" and not config["notify"]["ntfy"]["topic"]:
-        raise ConfigError("notify.ntfy.topic を設定してください（推測されにくい文字列にすること）。")
-    if provider == "discord" and not config["notify"]["discord"]["webhook_url"]:
-        raise ConfigError("notify.discord.webhook_url を設定してください。")
-    if provider == "email":
+    providers = config["notify"].get("providers")
+    if not isinstance(providers, list) or not providers:
+        raise ConfigError("notify.providers を1つ以上指定してください（例: [ntfy, windows]）。")
+    unknown = set(providers) - KNOWN_PROVIDERS
+    if unknown:
+        raise ConfigError(f"notify.providers に未対応の値があります: {sorted(unknown)}")
+    if "ntfy" in providers and not config["notify"]["ntfy"]["topic"]:
+        raise ConfigError(
+            "ntfy のトピックが未設定です。.env の NTFY_TOPIC か config.yaml に"
+            "推測されにくい文字列を設定してください。"
+        )
+    if "discord" in providers and not config["notify"]["discord"]["webhook_url"]:
+        raise ConfigError("Discord の webhook_url が未設定です（.env の DISCORD_WEBHOOK_URL）。")
+    if "email" in providers:
         email = config["notify"]["email"]
         for key in ("smtp_host", "username", "password", "to_addr"):
             if not email.get(key):
-                raise ConfigError(f"notify.email.{key} を設定してください。")
+                raise ConfigError(f"メール通知の {key} が未設定です。")
+    targets = config["crawl"].get("targets")
+    if not isinstance(targets, list) or not targets:
+        raise ConfigError("crawl.targets を1つ以上指定してください。")
+    for target in targets:
+        if not isinstance(target, dict) or not target.get("url"):
+            raise ConfigError(f"crawl.targets の形式が不正です: {target}")
     unknown = set(config["browsers"]) - {"edge", "chrome"}
     if unknown:
         raise ConfigError(f"browsers に未対応の値があります: {sorted(unknown)}")

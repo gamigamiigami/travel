@@ -25,8 +25,9 @@ from playwright.sync_api import BrowserContext, Error as PlaywrightError, Page
 
 from .config import rand_range
 from .detector import CouponHit, scan_json, scan_text
+from .history import HistoryLog
 from .notifier import Notifier
-from .state import NotifyState
+from .state import DailyCounter, NotifyState
 
 log = logging.getLogger(__name__)
 
@@ -53,6 +54,7 @@ MAX_POPUP_TEXT = 6000
 MAX_BODY_TEXT = 200_000
 MAX_JSON_BYTES = 1_500_000
 MAX_RESPONSES_PER_PAGE = 60
+MAX_FRAMES = 12
 
 
 @dataclass
@@ -78,6 +80,8 @@ class Watcher:
         notifier: Notifier,
         state: NotifyState,
         *,
+        history: HistoryLog | None = None,
+        daily: DailyCounter | None = None,
         sleeper: Callable[[float], None] = time.sleep,
         rng: random.Random | None = None,
     ) -> None:
@@ -89,6 +93,12 @@ class Watcher:
         self.sleep = sleeper
         self.rng = rng or random.Random()
         self.paths = CrawlPaths.create(config["paths"]["data_dir"])
+        self.history = history or HistoryLog(
+            self.paths.data_dir / config.get("history", {}).get("file", "history.csv"),
+            enabled=config.get("history", {}).get("enabled", True),
+        )
+        self.daily = daily or DailyCounter(self.paths.data_dir / "rounds.json")
+        self.current_target = "-"
         self._blocked = [re.compile(p, re.IGNORECASE) for p in self.crawl["blocked_url_patterns"]]
         self._preferred = [
             re.compile(p, re.IGNORECASE) for p in self.crawl["preferred_url_patterns"]
@@ -184,57 +194,82 @@ class Watcher:
 
         page.on("response", handle)
 
+    def _frames(self, page: Page) -> list:
+        """メインフレームだけでなく iframe も走査対象にする。
+
+        クーポンのポップアップが iframe の中に描画されている場合、メインフレームの
+        innerText には出てこない。ここを見ないと丸ごと取りこぼす。
+        """
+        try:
+            return list(page.frames)[:MAX_FRAMES]
+        except PlaywrightError:
+            return []
+
+    def _scan_args(self, source: str, page: Page, browser: str, frame_url: str) -> dict:
+        return {
+            "min_amount": self.detect["min_amount"],
+            "max_amount": self.detect["max_amount"],
+            "amounts_whitelist": self.detect["amounts_whitelist"],
+            "ignore_patterns": self.detect["ignore_patterns"],
+            "source": source,
+            "url": page.url,
+            "browser": browser,
+            "frame_url": frame_url,
+            "target": self.current_target,
+        }
+
     def scan_popups(self, page: Page, browser: str) -> list[CouponHit]:
-        """ポップアップらしき要素の中を、ゆるい条件で見る。"""
+        """ポップアップらしき要素の中を、ゆるい条件で見る（全フレーム）。"""
         hits: list[CouponHit] = []
-        for selector in POPUP_SELECTORS:
+        for frame in self._frames(page):
             try:
-                elements = page.query_selector_all(selector)
+                frame_url = frame.url
             except PlaywrightError:
                 continue
-            for element in elements[:8]:
+            for selector in POPUP_SELECTORS:
                 try:
-                    if not element.is_visible():
-                        continue
-                    text = element.inner_text()
+                    elements = frame.query_selector_all(selector)
                 except PlaywrightError:
                     continue
-                if not text or len(text) > MAX_POPUP_TEXT:
-                    continue
-                hits.extend(
-                    scan_text(
-                        text,
-                        strict=False,
-                        min_amount=self.detect["min_amount"],
-                        max_amount=self.detect["max_amount"],
-                        amounts_whitelist=self.detect["amounts_whitelist"],
-                        ignore_patterns=self.detect["ignore_patterns"],
-                        source="popup",
-                        url=page.url,
-                        browser=browser,
+                for element in elements[:8]:
+                    try:
+                        if not element.is_visible():
+                            continue
+                        text = element.inner_text()
+                    except PlaywrightError:
+                        continue
+                    if not text or len(text) > MAX_POPUP_TEXT:
+                        continue
+                    hits.extend(
+                        scan_text(
+                            text,
+                            strict=False,
+                            min_score=self.detect["min_score_popup"],
+                            **self._scan_args("popup", page, browser, frame_url),
+                        )
                     )
-                )
         return hits
 
     def scan_page(self, page: Page, browser: str) -> list[CouponHit]:
-        """ページ全体を、強いキーワード必須の厳しい条件で見る。"""
-        try:
-            text = page.inner_text("body")
-        except PlaywrightError:
-            return []
-        if not text:
-            return []
-        return scan_text(
-            text[:MAX_BODY_TEXT],
-            strict=True,
-            min_amount=self.detect["min_amount"],
-            max_amount=self.detect["max_amount"],
-            amounts_whitelist=self.detect["amounts_whitelist"],
-            ignore_patterns=self.detect["ignore_patterns"],
-            source="page",
-            url=page.url,
-            browser=browser,
-        )
+        """各フレームの全文を、強いキーワード必須の厳しい条件で見る。"""
+        hits: list[CouponHit] = []
+        for frame in self._frames(page):
+            try:
+                frame_url = frame.url
+                text = frame.locator("body").inner_text(timeout=3000)
+            except PlaywrightError:
+                continue
+            if not text:
+                continue
+            hits.extend(
+                scan_text(
+                    text[:MAX_BODY_TEXT],
+                    strict=True,
+                    min_score=self.detect["min_score_page"],
+                    **self._scan_args("page", page, browser, frame_url),
+                )
+            )
+        return hits
 
     def check(self, page: Page, browser: str) -> list[CouponHit]:
         hits = list(self._network_hits)
@@ -339,32 +374,60 @@ class Watcher:
             pass  # networkidle まで待てなくても検出は試す
         return True
 
+    def visit(self, page: Page, browser: str, url: str, target_name: str) -> int:
+        """1ページ見て、検出したら通知し、結果を履歴に残す。通知件数を返す。"""
+        self.current_target = target_name
+        if not self.goto(page, url):
+            return 0
+        self.human_dwell(page)
+        hits = self.check(page, browser)
+        notified = self.handle_hits(page, hits)
+
+        best = hits[0] if hits else None
+        self.history.record(
+            browser=browser,
+            target=target_name,
+            url=page.url,
+            detected=bool(hits),
+            amount=best.amount if best else None,
+            score=best.score if best else 0,
+            reasons=best.reasons if best else (),
+        )
+        return notified
+
     def run_round(self, context: BrowserContext, browser: str) -> int:
-        """1ラウンド分の散策。検出して通知した件数を返す。"""
+        """1ラウンド分の散策。
+
+        設定した targets を必ず1回ずつ見て、そこを起点にリンクを辿って宿の詳細まで
+        潜る。「決め打ちのページを確実に見る」と「毎回違うページを見る」の両立。
+        """
         page = context.pages[0] if context.pages else context.new_page()
         self._network_hits.clear()
         self._attach_network_listener(page, browser)
 
         notified = 0
-        lo, hi = rand_range(self.crawl["pages_per_round"])
-        page_count = self.rng.randint(int(lo), max(int(lo), int(hi)))
+        lo, hi = rand_range(self.crawl["wander_pages_per_target"])
+        targets = list(self.crawl["targets"])
+        self.rng.shuffle(targets)
 
-        if self.goto(page, self.crawl["start_url"]):
-            self.human_dwell(page)
-            notified += self.handle_hits(page, self.check(page, browser))
-
-        for index in range(page_count):
-            links = self.collect_links(page)
-            target = self.choose_link(links)
-            if target is None:
-                log.info("たどれるリンクがないのでトップに戻ります")
-                target = self.crawl["start_url"]
-            log.info("[%s] %d/%d %s", browser, index + 1, page_count, target)
-            if not self.goto(page, target):
-                self.goto(page, self.crawl["start_url"])
+        for target in targets:
+            name = target.get("name") or target["url"]
+            url = target["url"]
+            if not self.is_allowed_url(url):
+                log.warning("targets のURLが巡回対象外なので飛ばします: %s", url)
                 continue
-            self.human_dwell(page)
-            notified += self.handle_hits(page, self.check(page, browser))
+
+            log.info("[%s] ターゲット: %s", browser, name)
+            notified += self.visit(page, browser, url, name)
+
+            wander = self.rng.randint(int(lo), max(int(lo), int(hi)))
+            for index in range(wander):
+                next_url = self.choose_link(self.collect_links(page))
+                if next_url is None:
+                    log.info("たどれるリンクがないので次のターゲットへ")
+                    break
+                log.info("[%s]   潜行 %d/%d %s", browser, index + 1, wander, next_url)
+                notified += self.visit(page, browser, next_url, f"{name} > 散策")
 
         return notified
 

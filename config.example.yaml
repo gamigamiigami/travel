@@ -1,33 +1,41 @@
 # ------------------------------------------------------------------
-# Yahoo!トラベル スペシャルクーポン ウォッチャー 設定ファイル
+# Yahoo!トラベル スペシャルクーポン ウォッチャー v2  設定ファイル
 # このファイルを config.yaml という名前でコピーして編集してください。
-# config.yaml は .gitignore 済みです（トピック名やパスワードが入るため）。
+#
+# ★ パスワードやトピック名は config.yaml ではなく .env に書けます（推奨）。
+#    .env のほうが優先されます。
 # ------------------------------------------------------------------
 
 notify:
-  # ntfy / discord / email / console から選ぶ
-  provider: ntfy
+  # 複数同時に指定できます。ntfy / discord / email / windows / console
+  # 既定は「スマホ(ntfy) ＋ PCのトースト通知」の二段構え。
+  providers:
+    - ntfy
+    - windows
 
   ntfy:
     server: https://ntfy.sh
-    # ここは「他人に推測されない、長めのランダム文字列」にしてください。
-    # トピック名を知っている人は誰でも通知を読めます。
-    topic: "yahoo-coupon-CHANGEME-a7f39c21"
-    priority: 5          # 5=最優先。スマホのサイレントを貫きたいとき用
+    # .env の NTFY_TOPIC に書けばここは空でOK。
+    # 他人に推測されない長めのランダム文字列にしてください。
+    topic: ""
+    priority: 5
     attach_screenshot: true
 
+  windows:
+    app_id: "Yahoo Travel Coupon Watcher"
+    enabled: true
+
   discord:
-    webhook_url: ""
+    webhook_url: ""      # .env の DISCORD_WEBHOOK_URL でも可
 
   email:
     smtp_host: smtp.gmail.com
     smtp_port: 465
-    username: "あなたのアドレス@gmail.com"
-    password: "アプリパスワード16桁"   # Gmailは通常のパスワードでは送れません
+    username: ""         # .env の EMAIL_USERNAME
+    password: ""         # .env の EMAIL_PASSWORD（Gmailはアプリパスワード）
     from_addr: ""
-    to_addr: "受け取りたいアドレス@example.com"
+    to_addr: ""          # .env の EMAIL_TO
 
-  # 通知先に加えてコンソール（ログ）にも出す
   also_console: true
 
 # Edge と Chrome は別プロファイル＝別の抽選枠として回します
@@ -36,29 +44,34 @@ browsers:
   - chrome
 
 crawl:
-  # true にするとウィンドウが出ずに裏で動きます（常駐向け）
-  headless: false
+  headless: false        # true にするとウィンドウが出ません（常駐向け）
   start_url: https://travel.yahoo.co.jp/
 
-  # 1ラウンドで何ページ見るか [最小, 最大]
-  pages_per_round: [4, 8]
-  # 次のラウンドまで何分空けるか [最小, 最大]
-  # ★短くしすぎないこと。サイトへの迷惑になりますし、弾かれる原因にもなります。
-  interval_minutes: [12, 25]
-  # 1ページを何秒眺めるか [最小, 最大]
-  page_dwell_seconds: [6, 18]
+  # 毎ラウンド必ず見に行くページ。
+  # ★ 実際にクーポンが出たページを見つけたら、ここに足していくのが一番効きます。
+  targets:
+    - name: "トップページ"
+      url: "https://travel.yahoo.co.jp/"
+    # 例: よく泊まるエリアの検索結果や、狙っている宿の詳細ページ
+    # - name: "箱根の宿"
+    #   url: "https://travel.yahoo.co.jp/domestic/area/..."
+
+  # 各ターゲットから何ページぶんリンクを辿って潜るか [最小, 最大]
+  # 「具体的に宿を調べる」動きを作る部分です。
+  wander_pages_per_target: [2, 4]
+
+  interval_minutes: [12, 25]     # 次のラウンドまでの待ち時間 [最小, 最大]
+  page_dwell_seconds: [6, 18]    # 1ページを眺める秒数 [最小, 最大]
   scroll_steps: [2, 5]
   nav_timeout_seconds: 45
 
-  # この時間帯は巡回しない [開始時, 終了時] （深夜の無駄アクセスを避ける）
-  quiet_hours: [1, 7]
-  # 0 = 無制限に回し続ける
-  max_rounds: 0
+  quiet_hours: [1, 7]            # この時間帯は巡回しない
+  max_rounds: 0                  # 0 = 無制限
+  max_rounds_per_day: 40         # 1日あたりの上限（アクセスしすぎの歯止め）
 
   allowed_host_suffix: travel.yahoo.co.jp
 
-  # 絶対に踏まないURL。予約確定や決済に触れないための安全装置です。
-  # 消さないでください。
+  # 絶対に踏まないURL。予約確定や決済に触れないための安全装置です。消さないでください。
   blocked_url_patterns:
     - "/reserve"
     - "/reservation"
@@ -82,7 +95,6 @@ crawl:
     - "/contact"
     - "/cancel"
 
-  # 「具体的に宿を調べている」動きを作るため、この形のリンクを優先して選びます
   preferred_url_patterns:
     - "/dp/"
     - "/hotel"
@@ -94,13 +106,17 @@ crawl:
     - "/ranking"
 
 detect:
-  min_amount: 1000        # これ未満の割引は通知しない
+  min_amount: 1000
   max_amount: 100000
-  # 特定の金額だけ通知したいときに使う（例: [3000, 5000, 50000]）。
-  # 空のままなら min_amount / max_amount の範囲で判定します。
-  amounts_whitelist: []
+  amounts_whitelist: []          # 例: [3000, 5000, 50000] で金額を絞れる
 
-  # 「クーポンを獲得」ボタンがあれば自動で押す
+  # 何点以上でクーポンとみなすか。通知には点数と根拠が載ります。
+  # 通知が多すぎる → 数字を上げる / 出たのに来ない → 下げる
+  #   スペシャルクーポン +5 / 限定クーポン +4 / 獲得ボタン +3 / 時間限定 +3
+  #   残り分数の表記 +4 / 円OFF表記 +2 / クーポンコード +2 / クーポン +1
+  min_score_page: 7              # ページ全体を見るとき（厳しめ）
+  min_score_popup: 4             # ポップアップの中を見るとき（緩め）
+
   auto_claim: true
   claim_button_texts:
     - "クーポンを獲得"
@@ -111,13 +127,16 @@ detect:
     - "ゲットする"
     - "今すぐ獲得"
 
-  # 誤検知が出たら、その文言を正規表現でここに足すと黙らせられます
-  ignore_patterns: []
-
-  # 同じクーポンを何分間は再通知しないか（スペシャルクーポンの有効期限が180分）
+  ignore_patterns: []            # 誤検知したら、その文言を正規表現で足す
   dedupe_minutes: 180
   screenshot: true
-  network_scan: true      # クーポンAPIのJSONも覗く（DOM変更に強い）
+  network_scan: true
+
+# 検出の有無にかかわらず全チェック結果をCSVに残し、stats コマンドで集計します。
+# 「Edgeのほうが出やすい」「夜のほうが出やすい」を自分のデータで検証するため。
+history:
+  enabled: true
+  file: history.csv
 
 paths:
   profiles_dir: profiles

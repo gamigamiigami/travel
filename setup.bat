@@ -1,7 +1,7 @@
 @echo off
 chcp 65001 > nul
 cd /d "%~dp0"
-echo === Yahoo!トラベル クーポンウォッチャー セットアップ ===
+echo === Yahoo!トラベル クーポンウォッチャー v2 セットアップ ===
 
 where python >nul 2>nul
 if errorlevel 1 (
@@ -21,16 +21,18 @@ call .venv\Scripts\activate.bat
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 
-echo Playwright の実行基盤を確認しています...
-python -m playwright install-deps 2>nul
-
-if not exist config.yaml (
-  copy config.example.yaml config.yaml
+if not exist config.yaml copy config.example.yaml config.yaml >nul
+if not exist .env (
+  copy .env.example .env >nul
   echo.
-  echo config.yaml を作成しました。メモ帳で開いて通知先を設定してください。
-  notepad config.yaml
+  echo .env を作成しました。NTFY_TOPIC に好きな文字列を書いて保存してください。
+  notepad .env
 )
 
 echo.
-echo セットアップ完了です。次は login.bat を実行してください。
+echo 設定を確認します...
+python -m yahoo_coupon_watcher doctor
+
+echo.
+echo セットアップ完了です。次は test-notify.bat → login.bat の順に実行してください。
 pause

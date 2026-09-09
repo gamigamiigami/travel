@@ -1,4 +1,4 @@
-"""通知プロバイダ。設定に応じて ntfy / Discord / メール / コンソール を切り替える。"""
+"""通知プロバイダ。複数を同時に有効にできる（例: スマホ通知＋Windowsトースト）。"""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ class ConsoleNotifier:
 
 
 class MultiNotifier:
-    """本命の1つに加えて、必要ならコンソールにも出す。"""
+    """有効なプロバイダ全部に投げる。1つ失敗しても他は送る。"""
 
     name = "multi"
 
@@ -34,33 +34,43 @@ class MultiNotifier:
         self.notifiers = notifiers
 
     def send(self, title: str, message: str, image_path: Path | None = None) -> bool:
-        ok = False
+        delivered = False
         for notifier in self.notifiers:
             try:
-                ok = notifier.send(title, message, image_path) or ok
+                if notifier.send(title, message, image_path):
+                    delivered = True
             except Exception:  # 通知の失敗で巡回まで止めない
                 log.exception("通知に失敗しました: %s", getattr(notifier, "name", "?"))
-        return ok
+        return delivered
 
 
-def build_notifier(notify_config: dict[str, Any]) -> Notifier:
-    provider = notify_config.get("provider", "console")
-    notifiers: list[Notifier] = []
-
+def _build_one(provider: str, notify_config: dict[str, Any]) -> Notifier:
     if provider == "ntfy":
         from .ntfy import NtfyNotifier
 
-        notifiers.append(NtfyNotifier(**notify_config["ntfy"]))
-    elif provider == "discord":
+        return NtfyNotifier(**notify_config["ntfy"])
+    if provider == "discord":
         from .discord import DiscordNotifier
 
-        notifiers.append(DiscordNotifier(**notify_config["discord"]))
-    elif provider == "email":
+        return DiscordNotifier(**notify_config["discord"])
+    if provider == "email":
         from .email_smtp import EmailNotifier
 
-        notifiers.append(EmailNotifier(**notify_config["email"]))
+        return EmailNotifier(**notify_config["email"])
+    if provider == "windows":
+        from .windows_toast import WindowsToastNotifier
 
-    if provider == "console" or notify_config.get("also_console", True):
-        notifiers.append(ConsoleNotifier())
+        return WindowsToastNotifier(**notify_config.get("windows", {}))
+    if provider == "console":
+        return ConsoleNotifier()
+    raise ValueError(f"未対応の通知プロバイダです: {provider}")
 
+
+def build_notifier(notify_config: dict[str, Any]) -> Notifier:
+    providers = list(notify_config.get("providers") or [])
+    if notify_config.get("also_console", True) and "console" not in providers:
+        providers.append("console")
+    notifiers = [_build_one(name, notify_config) for name in providers]
+    if not notifiers:
+        notifiers = [ConsoleNotifier()]
     return notifiers[0] if len(notifiers) == 1 else MultiNotifier(notifiers)

@@ -46,7 +46,22 @@ _AMOUNT_COUPON = re.compile(
     r"([0-9０-９][0-9０-９,，、]{0,9})\s*円\s*(?:分\s*)?(?:の\s*)?クーポン",
 )
 # 「180分限定」「残り60分」などの有効時間。
+# スペシャルクーポンの有効時間は 60分 / 90分 / 180分 の3種が確認されている。
+# 180分だけを決め打ちすると残り2種を取りこぼすので、分表記全般を拾う。
 _TIME_LIMIT = re.compile(r"(?:残り|あと|以内|限定)?\s*([0-9]{1,4})\s*分\s*(?:限定|以内|間)?")
+
+# 検出の「確からしさ」を点数化する。何点で通知するかは設定で変えられる。
+# 通知には根拠も載せるので、誤検出したときに何が効いたのかがすぐ分かる。
+SCORE_RULES: tuple[tuple[str, int, str], ...] = (
+    (r"スペシャルクーポン", 5, "スペシャルクーポン"),
+    (r"限定クーポン|あなただけのクーポン|クーポンプレゼント|クーポンをプレゼント", 4, "限定クーポン"),
+    (r"クーポンを?(?:獲得|ゲット|もらう|受け取)", 3, "獲得ボタン"),
+    (r"時間限定|期間限定|今だけ", 3, "時間限定"),
+    (r"クーポン", 1, "クーポン表記"),
+)
+SCORE_TIME_LIMIT = 4      # 60分/90分/180分などの残り時間表記があれば加点
+SCORE_AMOUNT_OFF = 2      # 「◯◯円OFF」形式の金額表記があれば加点
+SCORE_COUPON_CODE = 2     # クーポンコードらしき英数字があれば加点
 # クーポンコードらしき英数字（8桁が多いと言われている）。
 _CODE = re.compile(r"\b([A-Z0-9]{6,16})\b")
 
@@ -71,6 +86,10 @@ class CouponHit:
     time_limit_min: int | None = None
     url: str | None = None
     browser: str | None = None
+    score: int = 0
+    reasons: tuple[str, ...] = ()
+    frame_url: str | None = None
+    target: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -92,7 +111,11 @@ class CouponHit:
             lines.append(f"コード: {self.code}")
         if self.time_limit_min:
             lines.append(f"有効時間: 約{self.time_limit_min}分")
-        lines.append(f"検出元: {self.source}")
+        if self.target:
+            lines.append(f"ページ: {self.target}")
+        lines.append(f"検出元: {self.source} (score={self.score})")
+        if self.reasons:
+            lines.append(f"根拠: {'・'.join(self.reasons)}")
         if self.url:
             lines.append(f"URL: {self.url}")
         snippet = re.sub(r"\s+", " ", self.snippet).strip()
@@ -127,6 +150,27 @@ def _keyword_spans(text: str, keywords: Iterable[str]) -> list[tuple[int, int]]:
     return spans
 
 
+def score_text(text: str) -> tuple[int, tuple[str, ...]]:
+    """テキストがどれくらいクーポンらしいかを点数と根拠で返す。"""
+    score = 0
+    reasons: list[str] = []
+    for pattern, points, label in SCORE_RULES:
+        if re.search(pattern, text):
+            score += points
+            reasons.append(label)
+    limit = _find_time_limit(text)
+    if limit is not None:
+        score += SCORE_TIME_LIMIT
+        reasons.append(f"{limit}分限定")
+    if _AMOUNT_OFF.search(text):
+        score += SCORE_AMOUNT_OFF
+        reasons.append("円OFF表記")
+    if _find_code(text):
+        score += SCORE_COUPON_CODE
+        reasons.append("クーポンコード")
+    return score, tuple(reasons)
+
+
 def _nearby(spans: Sequence[tuple[int, int]], pos: int, window: int) -> bool:
     return any(pos >= s - window and pos <= e + window for s, e in spans)
 
@@ -140,15 +184,25 @@ def scan_text(
     amounts_whitelist: Sequence[int] = (),
     ignore_patterns: Sequence[str] = (),
     window: int = 160,
+    min_score: int = 0,
     source: str = "page",
     url: str | None = None,
     browser: str | None = None,
+    frame_url: str | None = None,
+    target: str | None = None,
 ) -> list[CouponHit]:
     """テキストからクーポンを探す。
 
-    strict=True のときは STRONG_KEYWORDS が金額の近く(±window文字)に無いと採用しない。
-    ページ全体を舐めるときは strict=True、クーポンらしきポップアップの中だけを
-    見るときは strict=False で呼ぶ想定。
+    2つの関門を両方通ったものだけをクーポンとみなす。
+
+      1. 金額がクーポン系キーワードの近く(±window文字)にあること
+         （宿の価格を「クーポン額」と誤認しないため）
+      2. 周辺テキストのスコアが min_score 以上であること
+         （どれくらいクーポンらしいかの総合判定）
+
+    strict=True は STRONG_KEYWORDS のみを近接判定に使う。ページ全体を舐めるときは
+    strict=True + 高めの min_score、ポップアップの中だけを見るときは strict=False +
+    低めの min_score で呼ぶ想定。
     """
     if not text:
         return []
@@ -187,6 +241,10 @@ def scan_text(
             hi = min(len(text), match.end() + window)
             snippet = text[lo:hi]
 
+            score, reasons = score_text(snippet)
+            if score < min_score:
+                continue
+
             hit = CouponHit(
                 amount=amount,
                 source=source,
@@ -195,13 +253,24 @@ def scan_text(
                 time_limit_min=_find_time_limit(snippet),
                 url=url,
                 browser=browser,
+                score=score,
+                reasons=reasons,
+                frame_url=frame_url,
+                target=target,
             )
-            # 同じ金額で複数ヒットしたら、コードが取れている方を優先。
+            # 同じ金額で複数ヒットしたら、根拠が強い方を残す。
             prev = hits.get(str(amount))
-            if prev is None or (prev.code is None and hit.code is not None):
+            if prev is None or _better(hit, prev):
                 hits[str(amount)] = hit
 
     return sorted(hits.values(), key=lambda h: h.amount, reverse=True)
+
+
+def _better(candidate: CouponHit, current: CouponHit) -> bool:
+    """より信用できるヒットか。スコア優先、同点ならコードが取れている方。"""
+    if candidate.score != current.score:
+        return candidate.score > current.score
+    return current.code is None and candidate.code is not None
 
 
 def _find_code(snippet: str) -> str | None:
@@ -276,18 +345,25 @@ def scan_json(
             elif not (min_amount <= amount <= max_amount):
                 continue
             code = _extract_code(container)
+            snippet = json.dumps(container, ensure_ascii=False)[:400]
+            score, reasons = score_text(snippet)
+            # APIレスポンスにクーポン用のキーがある時点で確度が高いので下駄を履かせる。
+            score += 3
+            reasons = reasons + ("クーポンAPI",)
             hit = CouponHit(
                 amount=amount,
                 source="network",
-                snippet=json.dumps(container, ensure_ascii=False)[:400],
+                snippet=snippet,
                 code=code,
                 time_limit_min=None,
                 url=url,
                 browser=browser,
+                score=score,
+                reasons=reasons,
                 extra={"key": str(key)},
             )
             prev = hits.get(str(amount))
-            if prev is None or (prev.code is None and hit.code is not None):
+            if prev is None or _better(hit, prev):
                 hits[str(amount)] = hit
 
     if hits:

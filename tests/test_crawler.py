@@ -111,3 +111,167 @@ def test_dedupe_hits_keeps_distinct_amounts():
         CouponHit(amount=5000, source="page", snippet="", browser="edge"),
     ]
     assert [h.amount for h in dedupe_hits(hits)] == [5000, 1000]
+
+
+# ------------------------------------------------------------------
+# iframe 走査と履歴記録を、実ブラウザ無しで確かめる
+# ------------------------------------------------------------------
+
+class FakeLocator:
+    def __init__(self, text=""):
+        self._text = text
+
+    def inner_text(self, timeout=None):
+        return self._text
+
+    def count(self):
+        return 0
+
+    def is_visible(self, timeout=None):
+        return False
+
+    @property
+    def first(self):
+        return self
+
+
+class FakeElement:
+    def __init__(self, text):
+        self._text = text
+
+    def is_visible(self):
+        return True
+
+    def inner_text(self):
+        return self._text
+
+
+class FakeFrame:
+    def __init__(self, url, body_text="", popup_texts=()):
+        self.url = url
+        self._body = body_text
+        self._popups = list(popup_texts)
+
+    def locator(self, selector):
+        return FakeLocator(self._body)
+
+    def query_selector_all(self, selector):
+        # 最初のセレクタでだけ返す（同じ要素を何度も返さないため）
+        if selector == "[role='dialog']":
+            return [FakeElement(text) for text in self._popups]
+        return []
+
+
+class FakeMouse:
+    def wheel(self, dx, dy):
+        pass
+
+
+class FakePage:
+    def __init__(self, frames):
+        self.frames = frames
+        self.url = frames[0].url
+        self.mouse = FakeMouse()
+        self.screenshots = []
+
+    def goto(self, url, wait_until=None):
+        self.url = url
+
+    def wait_for_load_state(self, state, timeout=None):
+        pass
+
+    def on(self, event, handler):
+        pass
+
+    def get_by_text(self, pattern):
+        return FakeLocator()
+
+    def content(self):
+        return "<html></html>"
+
+    def screenshot(self, path, full_page=False):
+        self.screenshots.append(path)
+
+
+TOP = "https://travel.yahoo.co.jp/"
+
+
+def test_coupon_inside_iframe_is_detected(watcher):
+    """GPT版から取り入れた点。メインフレームだけ見ていると取りこぼす。"""
+    page = FakePage([
+        FakeFrame(TOP, body_text="宿泊プランを探す"),
+        FakeFrame(TOP + "promo/iframe",
+                  popup_texts=["スペシャルクーポン\n5,000円OFF\n残り180分限定"]),
+    ])
+    hits = watcher.check(page, "edge")
+    assert [h.amount for h in hits] == [5000]
+    assert hits[0].source == "popup"
+    assert hits[0].frame_url.endswith("promo/iframe")
+
+
+def test_main_frame_only_page_still_works(watcher):
+    page = FakePage([
+        FakeFrame(TOP, body_text="スペシャルクーポン 3,000円OFF 残り90分限定")
+    ])
+    hits = watcher.check(page, "chrome")
+    assert [h.amount for h in hits] == [3000]
+
+
+def test_ordinary_page_produces_no_hits(watcher):
+    page = FakePage([
+        FakeFrame(TOP, body_text="人気の温泉宿ランキング 1泊 5,000円から")
+    ])
+    assert watcher.check(page, "edge") == []
+
+
+def test_visit_records_detection_in_history(watcher):
+    page = FakePage([
+        FakeFrame(TOP, body_text="スペシャルクーポン 5,000円OFF 残り180分限定")
+    ])
+    notified = watcher.visit(page, "edge", TOP, "トップページ")
+    assert notified == 1
+
+    from yahoo_coupon_watcher.history import read_rows
+
+    rows = read_rows(watcher.history.path)
+    assert len(rows) == 1
+    assert rows[0].detected is True
+    assert rows[0].amount == 5000
+    assert rows[0].browser == "edge"
+    assert rows[0].target == "トップページ"
+
+
+def test_visit_records_miss_in_history(watcher):
+    page = FakePage([FakeFrame(TOP, body_text="宿を探す")])
+    assert watcher.visit(page, "edge", TOP, "トップページ") == 0
+
+    from yahoo_coupon_watcher.history import read_rows
+
+    rows = read_rows(watcher.history.path)
+    assert len(rows) == 1
+    assert rows[0].detected is False
+
+
+def test_same_coupon_notifies_once(watcher):
+    page = FakePage([
+        FakeFrame(TOP, body_text="スペシャルクーポン 5,000円OFF 残り180分限定")
+    ])
+    assert watcher.visit(page, "edge", TOP, "トップページ") == 1
+    assert watcher.visit(page, "edge", TOP, "トップページ") == 0  # 抑止される
+
+
+def test_same_coupon_notifies_per_browser(watcher):
+    page = FakePage([
+        FakeFrame(TOP, body_text="スペシャルクーポン 5,000円OFF 残り180分限定")
+    ])
+    assert watcher.visit(page, "edge", TOP, "トップページ") == 1
+    assert watcher.visit(page, "chrome", TOP, "トップページ") == 1
+
+
+def test_screenshot_saved_on_hit(watcher):
+    page = FakePage([
+        FakeFrame(TOP, body_text="スペシャルクーポン 5,000円OFF 残り180分限定")
+    ])
+    watcher.visit(page, "edge", TOP, "トップページ")
+    assert len(page.screenshots) == 1
+    assert page.screenshots[0].endswith(".png")

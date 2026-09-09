@@ -22,9 +22,10 @@ from .browser import CHANNELS, open_context, profile_dir
 from .config import ConfigError, load_config
 from .crawler import Watcher
 from .detector import CouponHit, scan_text
+from .history import HistoryLog, format_report, read_rows
 from .logging_setup import setup_logging
 from .notifier import build_notifier
-from .state import NotifyState
+from .state import DailyCounter, NotifyState
 
 log = logging.getLogger("yahoo_coupon_watcher")
 
@@ -85,7 +86,7 @@ def cmd_test_notify(args, config: dict) -> int:
         browser="test",
     )
     notifier.send("【テスト】" + hit.title(), hit.body(), None)
-    print("通知を送信しました。スマホに届いたか確認してください。")
+    print(f"通知先 {config['notify']['providers']} に送信しました。届いたか確認してください。")
     return 0
 
 
@@ -117,6 +118,7 @@ def cmd_capture(args, config: dict) -> int:
         max_amount=config["detect"]["max_amount"],
         amounts_whitelist=config["detect"]["amounts_whitelist"],
         ignore_patterns=config["detect"]["ignore_patterns"],
+        min_score=config["detect"]["min_score_page"],
         browser=browser,
     )
     print(f"保存先: {out_dir}")
@@ -127,37 +129,53 @@ def cmd_capture(args, config: dict) -> int:
 def cmd_scan_file(args, config: dict) -> int:
     """保存済みのテキスト/HTMLに対して検出ロジックを試す（ブラウザ不要）。"""
     text = Path(args.path).read_text(encoding="utf-8", errors="replace")
-    for strict in (True, False):
+    for strict, score_key, label in (
+        (True, "min_score_page", "ページ全体と同じ条件"),
+        (False, "min_score_popup", "ポップアップ内と同じ条件"),
+    ):
+        threshold = config["detect"][score_key]
         hits = scan_text(
             text,
             strict=strict,
+            min_score=threshold,
             min_amount=config["detect"]["min_amount"],
             max_amount=config["detect"]["max_amount"],
             amounts_whitelist=config["detect"]["amounts_whitelist"],
             ignore_patterns=config["detect"]["ignore_patterns"],
         )
-        label = "strict(ページ全体と同じ条件)" if strict else "loose(ポップアップ内と同じ条件)"
-        print(f"[{label}] {len(hits)}件")
+        print(f"[{label} / しきい値{threshold}点] {len(hits)}件")
         for hit in hits:
-            print(f"  - {hit.amount:,}円 code={hit.code} {hit.snippet[:120]!r}")
+            print(
+                f"  - {hit.amount:,}円 score={hit.score} code={hit.code} "
+                f"根拠={'・'.join(hit.reasons)}"
+            )
+            print(f"    {hit.snippet[:140]!r}")
     return 0
 
 
 def cmd_doctor(args, config: dict) -> int:
     print("== 設定 ==")
-    print(f"  通知先          : {config['notify']['provider']}")
+    print(f"  通知先          : {', '.join(config['notify']['providers'])}")
     print(f"  ブラウザ        : {', '.join(config['browsers'])}")
     print(f"  巡回間隔(分)    : {config['crawl']['interval_minutes']}")
     print(f"  1回のページ数   : {config['crawl']['pages_per_round']}")
     print(f"  停止時間帯      : {config['crawl']['quiet_hours']}")
+    print(f"  1日の上限       : {config['crawl']['max_rounds_per_day']}ラウンド")
     print(f"  検出下限        : {config['detect']['min_amount']:,}円")
+    print(f"  スコアしきい値  : ページ{config['detect']['min_score_page']} / "
+          f"ポップアップ{config['detect']['min_score_popup']}")
     print(f"  自動獲得        : {config['detect']['auto_claim']}")
+    print("== 監視ページ ==")
+    for target in config["crawl"]["targets"]:
+        print(f"  - {target.get('name') or ''}: {target['url']}")
     print("== プロファイル ==")
     for browser in config["browsers"]:
         path = profile_dir(config["paths"]["profiles_dir"], browser)
         logged_in = (path / "Default" / "Cookies").exists() or (path / "Cookies").exists()
         state = "ログイン済みの可能性あり" if logged_in else "未ログイン（login を実行してください）"
         print(f"  {browser:6s} ({CHANNELS[browser]}): {path} — {state}")
+    counter = DailyCounter(Path(config["paths"]["data_dir"]) / "rounds.json")
+    print(f"== 本日の巡回 ==\n  {counter.count_today()} ラウンド実行済み")
     print("== Playwright ==")
     try:
         import playwright  # noqa: F401
@@ -169,15 +187,30 @@ def cmd_doctor(args, config: dict) -> int:
     return 0
 
 
+def cmd_stats(args, config: dict) -> int:
+    """曜日別・時間帯別・ブラウザ別の出現率を集計する。"""
+    path = Path(config["paths"]["data_dir"]) / config["history"]["file"]
+    print(format_report(read_rows(path)))
+    print(f"\n(元データ: {path})")
+    return 0
+
+
 def cmd_run(args, config: dict) -> int:
     notifier = build_notifier(config["notify"])
     state = NotifyState(
         Path(config["paths"]["data_dir"]) / "notified.json",
         config["detect"]["dedupe_minutes"] * 60,
     )
-    watcher = Watcher(config, notifier, state, rng=random.Random())
+    history = HistoryLog(
+        Path(config["paths"]["data_dir"]) / config["history"]["file"],
+        enabled=config["history"]["enabled"],
+    )
+    daily = DailyCounter(Path(config["paths"]["data_dir"]) / "rounds.json")
+    watcher = Watcher(config, notifier, state, history=history, daily=daily,
+                      rng=random.Random())
     browsers = _resolve_browsers(config, args.browser)
     max_rounds = 1 if args.once else int(config["crawl"]["max_rounds"])
+    daily_limit = int(config["crawl"]["max_rounds_per_day"])
 
     log.info("巡回を開始します: browsers=%s", browsers)
     round_index = 0
@@ -193,6 +226,14 @@ def cmd_run(args, config: dict) -> int:
                 time.sleep(1800)
                 continue
 
+            if not args.once and daily.remaining(daily_limit) <= 0:
+                log.info(
+                    "本日の上限 %d ラウンドに達しました。日付が変わるまで待機します",
+                    daily_limit,
+                )
+                time.sleep(1800)
+                continue
+
             for browser in browsers:
                 try:
                     with open_context(
@@ -205,6 +246,7 @@ def cmd_run(args, config: dict) -> int:
                         log.info("[%s] ラウンド%d 完了 (通知 %d件)", browser, round_index, found)
                 except Exception:
                     log.exception("[%s] ラウンド中にエラーが発生しました", browser)
+            daily.increment()
 
             if max_rounds and round_index >= max_rounds:
                 break
@@ -247,6 +289,9 @@ def build_parser() -> argparse.ArgumentParser:
     scan = sub.add_parser("scan-file", help="保存済みファイルに検出ロジックを試す")
     scan.add_argument("path")
     scan.set_defaults(func=cmd_scan_file)
+
+    stats = sub.add_parser("stats", help="出現傾向を集計して表示する")
+    stats.set_defaults(func=cmd_stats)
 
     doctor = sub.add_parser("doctor", help="設定と環境の確認")
     doctor.set_defaults(func=cmd_doctor)
