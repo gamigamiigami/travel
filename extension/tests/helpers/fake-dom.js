@@ -97,7 +97,7 @@ function matchAll(elements, selector) {
  * content.js を読み込んで走らせる。
  * 返り値の listeners に onMessage のハンドラが入る。
  */
-function loadContentScript({ url = 'https://travel.yahoo.co.jp/', title = 'テスト', elements = [], settings = {}, runtimeAlive = true } = {}) {
+function loadContentScript({ url = 'https://travel.yahoo.co.jp/', title = 'テスト', elements = [], settings = {}, runtimeAlive = true, omit = [] } = {}) {
   const root = new FakeElement({ tag: 'body', children: elements });
   const all = root.descendants();
 
@@ -188,6 +188,7 @@ function loadContentScript({ url = 'https://travel.yahoo.co.jp/', title = 'テ�
   vm.createContext(context);
   const dir = path.join(__dirname, '..', '..', 'src');
   for (const file of ['detector.js', 'messaging.js', 'content.js']) {
+    if (omit.includes(file)) continue; // 読み込み失敗を再現するため
     vm.runInContext(fs.readFileSync(path.join(dir, file), 'utf8'), context, { filename: file });
   }
 

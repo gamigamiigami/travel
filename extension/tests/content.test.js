@@ -201,3 +201,23 @@ test('引き継いだあと新しい版でちゃんと検出できる', async ()
   assert.ok(response && response.ok, '新しい版が応答できるはず');
   assert.strictEqual(response.hits.length, 1);
 });
+
+test('読み込みに失敗したら、その内容を本体へ報告する', async () => {
+  // 行番号だけ見せられても原因は分からない。何が起きたかを文章で残す。
+  const env = loadContentScript({ elements: [badge()], omit: ['messaging.js'] });
+  await env.ready();
+
+  const reports = env.sent.filter((m) => m.type === 'scriptError');
+  assert.strictEqual(reports.length, 1, '黙って死んではいけない');
+  assert.strictEqual(reports[0].where, '読み込み');
+  assert.ok(
+    reports[0].detail.includes('Messaging'),
+    '原因が分かる内容であること: ' + reports[0].detail
+  );
+});
+
+test('読み込みに失敗してもページ側で例外を投げない', () => {
+  assert.doesNotThrow(() =>
+    loadContentScript({ elements: [badge()], omit: ['messaging.js'] })
+  );
+});
