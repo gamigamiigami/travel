@@ -12,6 +12,38 @@ const TEXTS = ['discordWebhookUrl', 'ntfyTopic'];
 
 const $ = (id) => document.getElementById(id);
 
+/**
+ * 要素が無くても落ちないようにする。
+ *
+ * 古いファイルと新しいファイルが混ざると、あるはずの要素が無いことがある。
+ * そこで例外を投げると画面全体が動かなくなり、原因も分かりにくい。
+ * 見つからないものは警告だけ出して飛ばす。
+ */
+function on(id, event, handler) {
+  const element = $(id);
+  if (!element) {
+    console.warn('[クーポンウォッチャー] 要素が見つかりません:', id);
+    return;
+  }
+  element.addEventListener(event, handler);
+}
+
+function setValue(id, value) {
+  const element = $(id);
+  if (!element) {
+    console.warn('[クーポンウォッチャー] 要素が見つかりません:', id);
+    return;
+  }
+  if (element.type === 'checkbox') element.checked = !!value;
+  else element.value = value;
+}
+
+function getValue(id, fallback) {
+  const element = $(id);
+  if (!element) return fallback;
+  return element.type === 'checkbox' ? element.checked : element.value;
+}
+
 function parseTargets(text) {
   const targets = [];
   for (const raw of text.split('\n')) {
@@ -39,27 +71,38 @@ function parseAmounts(text) {
 
 async function load() {
   const settings = await Settings.getSettings();
-  for (const id of CHECKBOXES) $(id).checked = !!settings[id];
-  for (const id of NUMBERS) $(id).value = settings[id];
-  for (const id of TEXTS) $(id).value = settings[id] || '';
-  $('targets').value = formatTargets(settings.targets);
-  $('amountsWhitelist').value = (settings.amountsWhitelist || []).join(',');
-  $('ignorePatterns').value = (settings.ignorePatterns || []).join('\n');
-  $('searchKeywords').value = (settings.searchKeywords || []).join('、');
-  $('discordField').style.display = settings.notifyDiscord ? '' : 'none';
+  for (const id of CHECKBOXES) setValue(id, settings[id]);
+  for (const id of NUMBERS) setValue(id, settings[id]);
+  for (const id of TEXTS) setValue(id, settings[id] || '');
+  setValue('targets', formatTargets(settings.targets));
+  setValue('amountsWhitelist', (settings.amountsWhitelist || []).join(','));
+  setValue('ignorePatterns', (settings.ignorePatterns || []).join('\n'));
+  setValue('searchKeywords', (settings.searchKeywords || []).join('、'));
+  if ($('discordField')) {
+    $('discordField').style.display = settings.notifyDiscord ? '' : 'none';
+  }
   await renderStats();
 }
 
 async function save() {
+  const current = await Settings.getSettings();
   const patch = {};
-  for (const id of CHECKBOXES) patch[id] = $(id).checked;
-  for (const id of NUMBERS) patch[id] = Number($(id).value);
-  for (const id of TEXTS) patch[id] = $(id).value.trim();
-  patch.ntfyTopic = patch.ntfyTopic.trim();
-  patch.targets = parseTargets($('targets').value);
-  patch.amountsWhitelist = parseAmounts($('amountsWhitelist').value);
-  patch.ignorePatterns = $('ignorePatterns').value.split('\n').map((s) => s.trim()).filter(Boolean);
-  patch.searchKeywords = $('searchKeywords').value
+  // 画面に無い項目は「変更なし」として現在値を残す。取りこぼして既定値に
+  // 戻ってしまうと、設定が勝手に変わったように見えてしまう。
+  for (const id of CHECKBOXES) patch[id] = getValue(id, current[id]);
+  for (const id of NUMBERS) {
+    const raw = getValue(id, null);
+    const value = raw === null || raw === '' ? current[id] : Number(raw);
+    patch[id] = Number.isFinite(value) ? value : current[id];
+  }
+  for (const id of TEXTS) patch[id] = String(getValue(id, current[id] || '')).trim();
+  patch.targets = parseTargets(String(getValue('targets', '')));
+  patch.amountsWhitelist = parseAmounts(getValue('amountsWhitelist', ''));
+  patch.ignorePatterns = String(getValue('ignorePatterns', ''))
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  patch.searchKeywords = String(getValue('searchKeywords', ''))
     .split(/[,、\n]/)
     .map((s) => s.trim())
     .filter(Boolean);
@@ -67,7 +110,9 @@ async function save() {
   if (!patch.targets.length) patch.targets = Settings.DEFAULTS.targets;
 
   await Settings.saveSettings(patch);
-  $('discordField').style.display = patch.notifyDiscord ? '' : 'none';
+  if ($('discordField')) {
+    $('discordField').style.display = patch.notifyDiscord ? '' : 'none';
+  }
   if (patch.notifyNtfy && !patch.ntfyTopic) {
     showStatus('testStatus', 'トピック名が空です。スマホ通知は送られません。', false);
   }
@@ -76,6 +121,10 @@ async function save() {
 
 function showStatus(id, message, ok) {
   const element = $(id);
+  if (!element) {
+    console.warn('[クーポンウォッチャー]', message);
+    return;
+  }
   element.textContent = message;
   element.className = 'status show ' + (ok ? 'ok' : 'ng');
 }
@@ -258,6 +307,23 @@ async function saveDiagnostics() {
   );
 }
 
+/**
+ * どの版が動いているかを画面に出す。
+ *
+ * 古いファイルと新しいファイルが混ざると原因の分からない不具合になるので、
+ * まずここを見れば入れ替えできているか確かめられる。
+ */
+function showVersion() {
+  try {
+    const manifest = chrome.runtime.getManifest();
+    setValue('version', manifest.version);
+    const element = $('version');
+    if (element) element.textContent = manifest.version;
+  } catch (e) {
+    /* 取得できなくても設定画面は使える */
+  }
+}
+
 function clockOf(timestamp) {
   const date = new Date(timestamp);
   return (
@@ -326,13 +392,14 @@ async function renderStats() {
 // ----------------------------------------------------------------- 配線
 
 document.addEventListener('DOMContentLoaded', async () => {
+  showVersion();
   await load();
 
   for (const element of document.querySelectorAll('input, textarea')) {
     element.addEventListener('change', save);
   }
 
-  $('copyTopic').addEventListener('click', async () => {
+  on('copyTopic', 'click', async () => {
     const topic = $('ntfyTopic').value.trim();
     if (!topic) {
       showStatus('testStatus', 'トピック名が空です。', false);
@@ -342,14 +409,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     showStatus('testStatus', 'トピック名をコピーしました。ntfyアプリや2台目のブラウザで貼り付けてください。', true);
   });
 
-  $('newTopic').addEventListener('click', async () => {
+  on('newTopic', 'click', async () => {
     if (!confirm('トピック名を作り直しますか？\nスマホのntfyアプリでも購読し直しが必要になります。')) return;
     const settings = await Settings.saveSettings({ ntfyTopic: Settings.randomTopic() });
     $('ntfyTopic').value = settings.ntfyTopic;
     showStatus('testStatus', '新しいトピック名を作りました。スマホ側も購読し直してください。', true);
   });
 
-  $('test').addEventListener('click', async () => {
+  on('test', 'click', async () => {
     showStatus('testStatus', '送信中…', true);
     const result = await chrome.runtime.sendMessage({ type: 'testNotify' }).catch((e) => ({
       ok: false,
@@ -362,7 +429,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  $('exportCsv').addEventListener('click', async () => {
+  on('exportCsv', 'click', async () => {
     const history = await getHistory();
     if (!history.length) return;
     const blob = new Blob(['﻿' + Stats.toCsv(history)], { type: 'text/csv;charset=utf-8' });
@@ -377,7 +444,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await renderActivity();
   setInterval(renderActivity, 5000);
 
-  $('watchPatrol').addEventListener('click', async () => {
+  on('watchPatrol', 'click', async () => {
     $('watchPatrol').disabled = true;
     $('watchPatrol').textContent = '巡回中…（タブの動きを見てください）';
     await chrome.runtime.sendMessage({ type: 'patrolNow', visible: true }).catch(() => {});
@@ -386,23 +453,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     await renderActivity();
   });
 
-  $('diagnose').addEventListener('click', async () => {
+  on('diagnose', 'click', async () => {
     showStatus('diagStatus', '読み取り中…', true);
     await saveDiagnostics();
   });
 
-  $('resetDedupe').addEventListener('click', async () => {
+  on('resetDedupe', 'click', async () => {
     await chrome.runtime.sendMessage({ type: 'resetDedupe' }).catch(() => {});
     showStatus('diagStatus', '重複抑止をリセットしました。同じクーポンでももう一度通知します。', true);
     await renderActivity();
   });
 
-  $('clearActivity').addEventListener('click', async () => {
+  on('clearActivity', 'click', async () => {
     await chrome.storage.local.set({ activity: [] });
     await renderActivity();
   });
 
-  $('clearHistory').addEventListener('click', async () => {
+  on('clearHistory', 'click', async () => {
     if (!confirm('履歴を全部消しますか？ 集計もリセットされます。')) return;
     await chrome.storage.local.set({ history: [] });
     await renderStats();

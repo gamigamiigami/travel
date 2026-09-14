@@ -2,6 +2,21 @@
 
 const $ = (id) => document.getElementById(id);
 
+/** 要素が無くても落ちないようにする（古いファイルが混ざったとき用）。 */
+function on(id, event, handler) {
+  const element = $(id);
+  if (!element) {
+    console.warn('[クーポンウォッチャー] 要素が見つかりません:', id);
+    return;
+  }
+  element.addEventListener(event, handler);
+}
+
+function setText(id, text) {
+  const element = $(id);
+  if (element) element.textContent = text;
+}
+
 function when(timestamp) {
   if (!timestamp) return '—';
   const diff = Date.now() - timestamp;
@@ -15,26 +30,27 @@ function when(timestamp) {
 
 function show(message, ok) {
   const element = $('status');
+  if (!element) return;
   element.textContent = message;
   element.className = 'status show ' + (ok ? 'ok' : 'ng');
 }
 
 async function render() {
   const settings = await Settings.getSettings();
-  $('enabled').checked = !!settings.enabled;
+  if ($('enabled')) $('enabled').checked = !!settings.enabled;
 
   const store = await chrome.storage.local.get(['daily', 'lastPatrolAt', 'nextPatrolAt', 'lastHit']);
   const used = store.daily && store.daily.date === new Date().toISOString().slice(0, 10)
     ? store.daily.count : 0;
   const limit = settings.maxPatrolsPerDay > 0 ? ` / ${settings.maxPatrolsPerDay}` : '';
-  $('daily').textContent = `${used}${limit} 回`;
-  $('last').textContent = when(store.lastPatrolAt);
-  $('next').textContent = settings.patrolEnabled ? when(store.nextPatrolAt) : '自動巡回オフ';
-  $('hit').textContent = store.lastHit
+  setText('daily', `${used}${limit} 回`);
+  setText('last', when(store.lastPatrolAt));
+  setText('next', settings.patrolEnabled ? when(store.nextPatrolAt) : '自動巡回オフ');
+  setText('hit', store.lastHit
     ? `${
         store.lastHit.amount ? store.lastHit.amount.toLocaleString() + '円' : '金額不明'
       } (${when(store.lastHit.t)})`
-    : 'まだなし';
+    : 'まだなし');
 }
 
 /**
@@ -91,6 +107,7 @@ function escapeHtml(text) {
 async function renderActivity() {
   const activity = (await chrome.storage.local.get('activity')).activity || [];
   const container = document.getElementById('activity');
+  if (!container) return;
   const recent = activity.slice(-6).reverse();
   container.innerHTML = recent.length
     ? recent
@@ -108,13 +125,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   await render();
   await renderActivity();
 
-  $('enabled').addEventListener('change', async () => {
+  on('enabled', 'change', async () => {
     await Settings.saveSettings({ enabled: $('enabled').checked });
     await chrome.runtime.sendMessage({ type: 'rescheduleAlarm' }).catch(() => {});
     await render();
   });
 
-  $('now').addEventListener('click', async () => {
+  on('now', 'click', async () => {
     show('巡回中です。裏のタブで見に行っています…', true);
     await chrome.runtime.sendMessage({ type: 'patrolNow' }).catch(() => {});
     show('巡回が終わりました。下の「最近の動き」で内容を確認できます。', true);
@@ -122,13 +139,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     await renderActivity();
   });
 
-  $('watch').addEventListener('click', async () => {
+  on('watch', 'click', async () => {
     // タブを表に出して巡回する。popup は閉じてしまうので、あとでログを見てもらう。
     show('タブを表示して巡回します。動きを見てください。', true);
     chrome.runtime.sendMessage({ type: 'patrolNow', visible: true }).catch(() => {});
   });
 
-  $('scan').addEventListener('click', async () => {
+  on('scan', 'click', async () => {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab) {
       show('タブを取得できませんでした。', false);
@@ -159,11 +176,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     );
   });
 
-  $('reset').addEventListener('click', async () => {
+  on('reset', 'click', async () => {
     await chrome.runtime.sendMessage({ type: 'resetDedupe' }).catch(() => {});
     show('重複抑止をリセットしました。同じクーポンでももう一度通知します。', true);
     await renderActivity();
   });
 
-  $('options').addEventListener('click', () => chrome.runtime.openOptionsPage());
+  on('options', 'click', () => chrome.runtime.openOptionsPage());
 });

@@ -560,6 +560,12 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 // ---------------------------------------------------------------- 起動時
 
 async function bootstrap() {
+  // どの版が動いているかをログに残す。ファイルの入れ替え漏れの切り分け用。
+  try {
+    await logActivity(`起動しました（v${chrome.runtime.getManifest().version}）`);
+  } catch (e) {
+    /* ログに失敗しても起動は続ける */
+  }
   const settings = await Settings.getSettings();
   if (!settings.ntfyTopic) {
     // 初回だけ、推測されにくいトピック名を自動で作る。ユーザーは入力しなくていい。
