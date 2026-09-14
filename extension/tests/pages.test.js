@@ -130,3 +130,31 @@ test('設定画面はバージョンを表示する', async () => {
   await env.ready();
   assert.strictEqual(env.elements.version.textContent, '0.0.0-test');
 });
+
+test('再注入するファイルは manifest から取る', async () => {
+  // ここを手で並べていたため messaging.js を書き忘れ、注入しても
+  // 受け口が登録されず「Receiving end does not exist」になっていた。
+  const env = loadPage('popup.html', ['settings.js', 'popup.js'], {
+    tabs: [{ id: 7, url: 'https://travel.yahoo.co.jp/', lastAccessed: 1 }],
+    tabSendMessage: () => Promise.reject(new Error('Could not establish connection.')),
+  });
+  await env.ready();
+  await env.fire('scan');
+
+  assert.strictEqual(env.calls.executeScript.length, 1, '届かなければ注入するはず');
+  const files = env.calls.executeScript[0].files;
+  assert.deepStrictEqual(files, ['src/detector.js', 'src/messaging.js', 'src/content.js']);
+});
+
+test('注入するファイルが manifest の実体と一致している', () => {
+  // manifest と実ファイルがずれていたら、注入しても動かない。
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const root = path.join(__dirname, '..');
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8'));
+  for (const entry of manifest.content_scripts) {
+    for (const file of entry.js) {
+      assert.ok(fs.existsSync(path.join(root, file)), `${file} が存在しない`);
+    }
+  }
+});

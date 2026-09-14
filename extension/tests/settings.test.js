@@ -194,3 +194,38 @@ test('クーポンのバッジが出るページを厚く選ぶ', () => {
   assert.ok(theme > plain);
   assert.ok(plain > kanko);
 });
+
+// ------------------------------------------------- 古い保存値からの移行
+
+test('金額リストが空のまま保存されていたら既定の4種に戻す', () => {
+  // 保存値は既定値より優先されるので、既定値を変えただけでは既存の利用者に
+  // 届かない。宿ごとの割引が通知され続けた原因がこれ。
+  const { settings, changed } = Settings.migrate({ enabled: true, amountsWhitelist: [] });
+  assert.deepStrictEqual(settings.amountsWhitelist, [1000, 2000, 3000, 5000]);
+  assert.strictEqual(settings.requireCountdown, true);
+  assert.strictEqual(settings.maxTimeLimitMin, 180);
+  assert.strictEqual(changed, true);
+});
+
+test('移行済みの設定はそのまま尊重する', () => {
+  const { settings, changed } = Settings.migrate({
+    settingsVersion: Settings.SETTINGS_VERSION,
+    amountsWhitelist: [5000],
+    requireCountdown: false,
+  });
+  assert.deepStrictEqual(settings.amountsWhitelist, [5000]);
+  assert.strictEqual(settings.requireCountdown, false, '利用者が選んだ設定を勝手に戻さない');
+  assert.strictEqual(changed, false);
+});
+
+test('設定が無い状態でも既定値になる', () => {
+  const { settings } = Settings.migrate(undefined);
+  assert.deepStrictEqual(settings.amountsWhitelist, [1000, 2000, 3000, 5000]);
+  assert.strictEqual(settings.settingsVersion, Settings.SETTINGS_VERSION);
+});
+
+test('移行は一度だけ走る', () => {
+  const first = Settings.migrate({ amountsWhitelist: [] });
+  const second = Settings.migrate(first.settings);
+  assert.strictEqual(second.changed, false);
+});

@@ -76,9 +76,13 @@ async function scanTab(tabId) {
 
   // ここまで届かないなら content script が入っていない。注入して最後の再試行。
   try {
+    // 読み込むファイルは manifest から取る。ここに手で並べると、
+    // ファイルが増えたときに書き忘れて「注入したのに動かない」になる。
+    const files = (chrome.runtime.getManifest().content_scripts || [])
+      .flatMap((entry) => entry.js || []);
     await chrome.scripting.executeScript({
       target: { tabId, allFrames: true },
-      files: ['src/detector.js', 'src/content.js'],
+      files,
     });
     await new Promise((resolve) => setTimeout(resolve, 700));
     const response = await chrome.tabs.sendMessage(tabId, { type: 'scan' }, { frameId: 0 });

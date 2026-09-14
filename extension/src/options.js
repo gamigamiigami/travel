@@ -98,6 +98,12 @@ async function save() {
   for (const id of TEXTS) patch[id] = String(getValue(id, current[id] || '')).trim();
   patch.targets = parseTargets(String(getValue('targets', '')));
   patch.amountsWhitelist = parseAmounts(getValue('amountsWhitelist', ''));
+  // 空にすると「どの金額でも通知」になり、宿ごとの割引まで拾ってしまう。
+  // 意図しにくい状態なので、空なら既定の4種に戻す。
+  if (!patch.amountsWhitelist.length) {
+    patch.amountsWhitelist = Settings.DEFAULTS.amountsWhitelist.slice();
+    setValue('amountsWhitelist', patch.amountsWhitelist.join(','));
+  }
   patch.ignorePatterns = String(getValue('ignorePatterns', ''))
     .split('\n')
     .map((s) => s.trim())

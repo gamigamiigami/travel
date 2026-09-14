@@ -135,7 +135,7 @@ function loadBackground() {
  * 設定画面 / popup を走らせる。
  * HTML から id を拾って要素を用意するので、JS と HTML の食い違いが分かる。
  */
-function loadPage(htmlFile, jsFiles) {
+function loadPage(htmlFile, jsFiles, options = {}) {
   const html = fs.readFileSync(path.join(SRC, htmlFile), 'utf8');
   const ids = new Set();
   for (const match of html.matchAll(/\bid="([^"]+)"/g)) ids.add(match[1]);
@@ -143,6 +143,7 @@ function loadPage(htmlFile, jsFiles) {
   const warnings = [];
   const elements = {};
   const domReady = [];
+  const calls = { executeScript: [], tabMessages: [], messages: [] };
 
   for (const id of ids) {
     elements[id] = {
@@ -162,7 +163,11 @@ function loadPage(htmlFile, jsFiles) {
 
   const context = {
     console: { warn: (...a) => warnings.push(a.join(' ')), log() {}, error: (...a) => warnings.push(a.join(' ')) },
-    setTimeout: () => 1,
+    // 待ち時間は無視してすぐ実行する。放置すると await が永久に返らない。
+    setTimeout: (fn) => {
+      if (typeof fn === 'function') setImmediate(fn);
+      return 1;
+    },
     clearTimeout() {},
     setInterval: () => 1,
     Promise, URL, Set, Map, Math, Date, JSON, Object, Array, Number, String, RegExp, Error,
@@ -177,13 +182,32 @@ function loadPage(htmlFile, jsFiles) {
     chrome: {
       runtime: {
         id: 'testextension',
-        getManifest: () => ({ version: '0.0.0-test' }),
-        sendMessage: () => Promise.resolve({ ok: true }),
+        getManifest: () => ({
+          version: '0.0.0-test',
+          content_scripts: [{ js: ['src/detector.js', 'src/messaging.js', 'src/content.js'] }],
+        }),
+        sendMessage: (message) => {
+          calls.messages.push(message);
+          return Promise.resolve({ ok: true });
+        },
         openOptionsPage() {},
       },
       storage: makeStorage(),
-      tabs: { query: () => Promise.resolve([]), sendMessage: () => Promise.resolve(null) },
-      scripting: { executeScript: () => Promise.resolve([]) },
+      tabs: {
+        query: () => Promise.resolve(options.tabs || []),
+        sendMessage: (tabId, message, opts) => {
+          calls.tabMessages.push({ tabId, message, opts });
+          return options.tabSendMessage
+            ? options.tabSendMessage(tabId, message, opts)
+            : Promise.resolve(null);
+        },
+      },
+      scripting: {
+        executeScript: (params) => {
+          calls.executeScript.push(params);
+          return Promise.resolve([]);
+        },
+      },
     },
   };
   context.globalThis = context;
@@ -198,7 +222,15 @@ function loadPage(htmlFile, jsFiles) {
     for (let i = 0; i < 8; i++) await new Promise((r) => setImmediate(r));
   }
 
-  return { context, elements, ids, warnings, ready };
+  /** ボタンなどのイベントを発火させる。 */
+  async function fire(id, event = 'click') {
+    const element = elements[id];
+    if (!element) throw new Error('要素がありません: ' + id);
+    for (const fn of element.listeners[event] || []) await fn();
+    for (let i = 0; i < 8; i++) await new Promise((r) => setImmediate(r));
+  }
+
+  return { context, elements, ids, warnings, ready, calls, fire };
 }
 
 module.exports = { loadBackground, loadPage };

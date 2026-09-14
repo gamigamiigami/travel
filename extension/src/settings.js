@@ -2,7 +2,12 @@
 (function (root) {
   'use strict';
 
+  // 設定の版。既定値の意味が変わったときに上げる。
+  // 古い保存値が新しい既定値を黙って上書きするのを防ぐため。
+  const SETTINGS_VERSION = 2;
+
   const DEFAULTS = {
+    settingsVersion: SETTINGS_VERSION,
     enabled: true,
 
     // 通知
@@ -90,9 +95,56 @@
     return 'yt-coupon-' + (suffix || Math.random().toString(36).slice(2, 16));
   }
 
+  /**
+   * 保存済みの設定を今の版に合わせる。
+   *
+   * 保存値は既定値より優先される。そのため、既定値の意味を変えても、
+   * 一度でも設定画面を開いたことがある人には古い値が残り続ける。
+   * 「スペシャルクーポンだけ通知する」に変えたのに宿ごとの割引が
+   * 通知され続けたのは、空の金額リストが保存されていたため。
+   *
+   * 変更があれば changed: true を返す。呼び出し側が保存し直す。
+   */
+  function migrate(stored) {
+    const settings = Object.assign({}, DEFAULTS, stored || {});
+    const from = Number(stored && stored.settingsVersion) || 1;
+    let changed = false;
+
+    if (from < 2) {
+      // 版1では金額の絞り込みが空（＝どの金額でも通知）だった。
+      // 空のままだと宿ごとの割引まで拾うので、既定の4種に戻す。
+      if (!Array.isArray(settings.amountsWhitelist) || settings.amountsWhitelist.length === 0) {
+        settings.amountsWhitelist = DEFAULTS.amountsWhitelist.slice();
+        changed = true;
+      }
+      if (typeof settings.requireCountdown !== 'boolean') {
+        settings.requireCountdown = DEFAULTS.requireCountdown;
+        changed = true;
+      }
+      if (!Number(settings.maxTimeLimitMin)) {
+        settings.maxTimeLimitMin = DEFAULTS.maxTimeLimitMin;
+        changed = true;
+      }
+    }
+
+    if (settings.settingsVersion !== SETTINGS_VERSION) {
+      settings.settingsVersion = SETTINGS_VERSION;
+      changed = true;
+    }
+    return { settings, changed };
+  }
+
   async function getSettings() {
     const stored = await chrome.storage.local.get('settings');
-    return Object.assign({}, DEFAULTS, stored.settings || {});
+    const { settings, changed } = migrate(stored.settings);
+    if (changed) {
+      try {
+        await chrome.storage.local.set({ settings });
+      } catch (e) {
+        /* 保存できなくても、この場では新しい値で動く */
+      }
+    }
+    return settings;
   }
 
   async function saveSettings(patch) {
@@ -180,6 +232,8 @@
 
   const Settings = {
     DEFAULTS,
+    SETTINGS_VERSION,
+    migrate,
     ALLOWED_HOST_SUFFIX,
     BLOCKED_URL_PATTERNS,
     PREFERRED_URL_PATTERNS,
