@@ -168,3 +168,45 @@ test('スペシャルクーポンの4種の有効時間を読み取れる', () =
     assert.strictEqual(D.findTimeLimit(`残${minutes}分`), minutes);
   }
 });
+
+// スクリーンショットから起こした、クーポン表示の3状態すべて。
+// 実物そのものなので、ここが壊れたら取りこぼす。
+const STATE_COLLAPSED = '残180分';
+const STATE_PANEL = '使うor貯めるが選べる！\n2,000円分\nクーポン獲得しました\n詳しくみる';
+const STATE_DETAIL = [
+  '今回のご予約限定！ 使う or 貯める が選べる',
+  '2,000円分クーポンを獲得しました',
+  '※20,000円以上のご予約からご利用可能です',
+  '※こちらの割引クーポンは、1回分のご予約に限りご利用することができます',
+  '※ポップアップが表示されてから180分以内に予約入力画面にお進みいただければ、',
+  'クーポンがご利用いただける状態になります。予約入力画面に進んでからの利用期限は60分となります。',
+].join('\n');
+
+const SPECIAL = [1000, 2000, 3000, 5000];
+
+test('状態1: 中パネル（金額＋獲得しました）を検出する', () => {
+  const hits = scan(STATE_PANEL, { strict: false, amountsWhitelist: SPECIAL });
+  assert.deepStrictEqual(amounts(hits), [2000]);
+  assert.ok(hits[0].score >= 4, `score=${hits[0].score}`);
+});
+
+test('状態2: 詳細パネル（注意書き付き）を検出する', () => {
+  const hits = scan(STATE_DETAIL, { strict: false, amountsWhitelist: SPECIAL });
+  assert.deepStrictEqual(amounts(hits), [2000]);
+  assert.strictEqual(hits[0].timeLimitMin, 180);
+  assert.ok(hits[0].score >= 10, `score=${hits[0].score}`);
+});
+
+test('状態2: 注意書きの「20,000円以上」を金額と誤認しない', () => {
+  const hits = scan(STATE_DETAIL, { strict: false, amountsWhitelist: SPECIAL });
+  assert.ok(!amounts(hits).includes(20000));
+});
+
+test('状態3: 折りたたみバッジは金額を持たないが残り時間は読める', () => {
+  assert.deepStrictEqual(scan(STATE_COLLAPSED, { strict: false }), []);
+  assert.strictEqual(D.findTimeLimit(STATE_COLLAPSED), 180);
+});
+
+test('残180分はちょうど上限。切り捨てない', () => {
+  assert.strictEqual(D.findTimeLimit('残180分'), 180);
+});

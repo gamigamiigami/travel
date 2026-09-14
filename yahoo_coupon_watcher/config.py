@@ -94,7 +94,7 @@ DEFAULTS: dict[str, Any] = {
         ],
         "ignore_patterns": [],
         # 何点以上でクーポンとみなすか。ページ全体は厳しく、ポップアップ内は緩く。
-        "min_score_page": 7,
+        "min_score_page": 6,
         "min_score_popup": 4,
         "dedupe_minutes": 180,
         "screenshot": True,

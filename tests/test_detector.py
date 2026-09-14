@@ -212,3 +212,45 @@ def test_badge_signature_differs_from_amount_signature():
     badge = CouponHit(amount=None, source="badge", snippet="", browser="edge")
     priced = CouponHit(amount=5000, source="popup", snippet="", browser="edge")
     assert badge.signature != priced.signature
+
+
+# スクリーンショットから起こした、クーポン表示の3状態すべて。
+STATE_COLLAPSED = "残180分"
+STATE_PANEL = "使うor貯めるが選べる！\n2,000円分\nクーポン獲得しました\n詳しくみる"
+STATE_DETAIL = "\n".join(
+    [
+        "今回のご予約限定！ 使う or 貯める が選べる",
+        "2,000円分クーポンを獲得しました",
+        "※20,000円以上のご予約からご利用可能です",
+        "※こちらの割引クーポンは、1回分のご予約に限りご利用することができます",
+        "※ポップアップが表示されてから180分以内に予約入力画面にお進みいただければ、",
+        "クーポンがご利用いただける状態になります。予約入力画面に進んでからの利用期限は60分となります。",
+    ]
+)
+SPECIAL = [1000, 2000, 3000, 5000]
+
+
+def test_state_panel():
+    hits = scan_text(STATE_PANEL, strict=False, amounts_whitelist=SPECIAL)
+    assert [h.amount for h in hits] == [2000]
+    assert hits[0].score >= 4
+
+
+def test_state_detail():
+    hits = scan_text(STATE_DETAIL, strict=False, amounts_whitelist=SPECIAL)
+    assert [h.amount for h in hits] == [2000]
+    assert hits[0].time_limit_min == 180
+    assert hits[0].score >= 10
+
+
+def test_state_detail_does_not_pick_up_the_minimum_spend():
+    """注意書きの「20,000円以上」はクーポンの金額ではない。"""
+    hits = scan_text(STATE_DETAIL, strict=False, amounts_whitelist=SPECIAL)
+    assert 20000 not in [h.amount for h in hits]
+
+
+def test_state_collapsed():
+    from yahoo_coupon_watcher.detector import _find_time_limit
+
+    assert scan_text(STATE_COLLAPSED, strict=False) == []
+    assert _find_time_limit(STATE_COLLAPSED) == 180

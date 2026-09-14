@@ -50,7 +50,7 @@
     // スペシャルクーポンの有効時間は 60 / 120 / 150 / 180 分。
     // バッジに出るのは「残り」時間なので、上限だけを見る。
     maxTimeLimitMin: 180,
-    minScorePage: 7,
+    minScorePage: 6,
     minScorePopup: 4,
     ignorePatterns: [],
     autoClaim: true,
