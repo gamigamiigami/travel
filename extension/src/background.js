@@ -302,6 +302,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     Settings.getSettings().then((settings) => sendResponse({ settings }));
     return true;
   }
+  if (message.type === 'scriptError') {
+    // ページ側で起きた不具合。DevTools を開かなくても巡回ログで読める。
+    logActivity(`エラー（${message.where}）: ${message.detail}`, 'warn');
+    return false;
+  }
   if (message.type === 'skipped') {
     const hit = message.hit || {};
     logActivity(

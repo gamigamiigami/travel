@@ -6,21 +6,24 @@ const { FakeElement, loadContentScript } = require('./helpers/fake-dom.js');
 // deepStrictEqual は prototype の同一性まで見るので、素の値に落としてから比べる。
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
-/** onMessage に投げて返事を受け取る。 */
+/**
+ * onMessage に投げて返事を受け取る。
+ *
+ * 実際のブラウザでは、切り離された古いスクリプトの受け口は呼ばれない。
+ * ここでも最後に登録されたもの（＝生きている版）だけに聞く。
+ */
 function ask(env, message) {
+  const listener = env.listeners[env.listeners.length - 1];
   return new Promise((resolve) => {
     let answered = false;
-    for (const listener of env.listeners) {
-      const kept = listener(message, {}, (response) => {
-        answered = true;
-        resolve(response);
-      });
-      if (kept) {
-        // 非同期で返す場合、内部の Promise が解決するのを待つ
-        setTimeout(() => {
-          if (!answered) resolve(null);
-        }, 50);
-      }
+    const kept = listener(message, {}, (response) => {
+      answered = true;
+      resolve(response);
+    });
+    if (kept) {
+      setTimeout(() => {
+        if (!answered) resolve(null);
+      }, 50);
     }
   });
 }
@@ -150,4 +153,51 @@ test('Yahoo!トラベル以外のフレームでは何もしない', async () =>
   await env.ready();
   assert.strictEqual(env.listeners.length, 0, 'リスナーすら登録しない');
   assert.deepStrictEqual(plain(env.sent), []);
+});
+
+test('同じ版が生きているうちは二重に起動しない', async () => {
+  const env = loadContentScript({ elements: [badge()] });
+  await env.ready();
+  assert.strictEqual(env.listeners.length, 1);
+
+  env.injectAgain();
+  await env.ready();
+  assert.strictEqual(env.listeners.length, 1, '受け口が二重に登録されてはいけない');
+});
+
+test('古い版が死んでいたら新しい版が引き継ぐ', async () => {
+  // 拡張を更新したあとの状況。古いスクリプトは切り離されて死んでいる。
+  const env = loadContentScript({ elements: [badge()] });
+  await env.ready();
+  assert.strictEqual(env.listeners.length, 1);
+
+  // 本体との接続が切れる（拡張の更新）
+  env.context.chrome.runtime.id = undefined;
+  env.context.__observer.callback([]); // 古い版が切断に気づく
+  env.runTimers();
+
+  // popup が新しい版を注入し直す
+  env.injectAgain({ runtimeAlive: true });
+  await env.ready();
+  assert.strictEqual(
+    env.listeners.length,
+    2,
+    '新しい版が受け口を登録できないと、ページが永久に無反応になる'
+  );
+});
+
+test('引き継いだあと新しい版でちゃんと検出できる', async () => {
+  const env = loadContentScript({ elements: [badge('残176分')] });
+  await env.ready();
+
+  env.context.chrome.runtime.id = undefined;
+  env.context.__observer.callback([]);
+  env.runTimers();
+
+  env.injectAgain({ runtimeAlive: true });
+  await env.ready();
+
+  const response = await ask(env, { type: 'scan' });
+  assert.ok(response && response.ok, '新しい版が応答できるはず');
+  assert.strictEqual(response.hits.length, 1);
 });

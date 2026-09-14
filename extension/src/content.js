@@ -8,9 +8,28 @@
 (function () {
   'use strict';
 
-  // popup からの再注入などで2回読み込まれても、監視を二重に走らせない。
-  if (globalThis.__ytCouponWatcherLoaded) return;
-  globalThis.__ytCouponWatcherLoaded = true;
+  // 二重起動は避けたいが、「古い版が死んでいる」場合は入れ替わる必要がある。
+  //
+  // 拡張を更新すると、開いていたページの中の古いスクリプトは本体から切り離される。
+  // そこへ新しいスクリプトを注入しても、単純な「読み込み済みフラグ」で弾いて
+  // しまうと、新しい版が受け口を登録できずページが永久に無反応になる
+  // （Could not establish connection. Receiving end does not exist.）。
+  // 生きているかどうかで判断する。
+  const previous = globalThis.__ytCouponWatcher;
+  if (previous) {
+    let previousAlive = false;
+    try {
+      previousAlive = !!previous.isAlive();
+    } catch (e) {
+      previousAlive = false;
+    }
+    if (previousAlive) return; // 同じ版がもう動いている
+    try {
+      previous.shutdown(); // 死んだ版の監視を止めてから引き継ぐ
+    } catch (e) {
+      /* 止められなくても新しい版は動かす */
+    }
+  }
 
   // クーポンのポップアップが travel.yahoo.co.jp 以外のドメインの iframe で
   // 描画されている場合に備え、Yahoo系ドメイン全体に読み込まれる設定にしてある。
@@ -123,17 +142,40 @@
   });
   const send = (message) => messenger.send(message);
 
+  // 次に注入される版が「この版が生きているか」を判断できるようにしておく。
+  globalThis.__ytCouponWatcher = {
+    isAlive: () => messenger.isAlive(),
+    shutdown: () => messenger.giveUp(),
+  };
+
+  /**
+   * 失敗した場所と内容を巡回ログへ送る。
+   *
+   * 不具合の報告をもらうたびに DevTools を開いてもらうのは負担が大きい。
+   * 設定画面の巡回ログを見れば原因が分かる状態にしておく。
+   */
+  function reportError(where, error) {
+    const detail = String((error && (error.stack || error.message)) || error);
+    console.warn('[クーポンウォッチャー]', where, detail);
+    send({
+      type: 'scriptError',
+      where,
+      detail: detail.slice(0, 600),
+      pageUrl: location.href,
+    });
+  }
+
   /**
    * 失敗しても全体を止めないための包み。
    *
    * 検出は「ポップアップ」「ページ全文」「カウントダウンのバッジ」の3経路。
    * まとめて try で囲むと、1か所の失敗で全部が無効になる。経路ごとに包む。
    */
-  function safely(fn, fallback) {
+  function safely(fn, fallback, where) {
     try {
       return fn();
     } catch (e) {
-      console.warn('[クーポンウォッチャー] 判定の一部に失敗:', (e && e.message) || e);
+      reportError(where || '判定', e);
       return fallback;
     }
   }
@@ -340,7 +382,12 @@
   }
 
   function scan(reason, targetName) {
-    if (!messenger.isAlive()) return [];
+    if (!messenger.isAlive()) {
+      // 切り離されたと分かった時点で監視を畳む。放っておくと、死んだ
+      // スクリプトの MutationObserver がページを開いている間ずっと回り続ける。
+      messenger.giveUp();
+      return [];
+    }
     if (!settings || !settings.enabled) return [];
     const now = Date.now();
     if (reason !== 'manual' && now - lastScanAt < SCAN_COOLDOWN_MS) return [];
@@ -349,12 +396,12 @@
     // 判定は3つの経路がある。どれか1つが失敗しても、残りは動かす。
     // まとめて try で囲むと、1か所の失敗で検出が全滅する。
     const candidates = best(
-      safely(() => scanPopups(0), []).concat(safely(() => scanWholePage(0), []))
+      safely(() => scanPopups(0), [], 'ポップアップの走査').concat(safely(() => scanWholePage(0), [], 'ページ全文の走査'))
     );
 
     // 先にバッジを見る。カウントダウンの有無が、スペシャルクーポンと
     // 宿ごとのクーポンを分ける決め手になる。
-    const badge = safely(() => findCouponBadge(), null);
+    const badge = safely(() => findCouponBadge(), null, 'バッジの判定');
     if (badge) sawCountdownAt = Date.now();
 
     const threshold = (hit) =>
@@ -568,6 +615,20 @@
   }
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    try {
+      return handleMessage(message, sendResponse);
+    } catch (e) {
+      reportError('メッセージ処理(' + (message && message.type) + ')', e);
+      try {
+        sendResponse({ ok: false, error: String((e && e.message) || e) });
+      } catch (ignored) {
+        /* 返事すら返せない状態なら諦める */
+      }
+      return false;
+    }
+  });
+
+  function handleMessage(message, sendResponse) {
     if (message.type === 'scan') {
       // 注入直後は設定をまだ持っていないことがある。その場合は取ってから調べる。
       const run = settings
@@ -576,7 +637,12 @@
             settings = response && response.settings;
           });
       run.then(() => {
-        const results = scan('manual', message.targetName);
+        let results = [];
+        try {
+          results = scan('manual', message.targetName);
+        } catch (e) {
+          reportError('走査', e);
+        }
         sendResponse({
           ok: true,
           hits: results.map((r) => r.hit),
@@ -591,7 +657,10 @@
       return true;
     }
     if (message.type === 'links') {
-      sendResponse({ ok: true, links: isTopFrame ? collectLinks() : [] });
+      sendResponse({
+        ok: true,
+        links: isTopFrame ? safely(collectLinks, [], 'リンクの収集') : [],
+      });
       return true;
     }
     if (message.type === 'settingsChanged') {
@@ -599,7 +668,7 @@
       return false;
     }
     return false;
-  });
+  }
 
   async function start() {
     const response = await send({ type: 'getSettings' });
@@ -607,9 +676,11 @@
     if (!settings) return;
 
     // ポップアップは読み込み直後に出たり、少し遅れて出たりする。
-    for (const delay of [800, 2500, 6000, 12000]) setTimeout(() => scan('load'), delay);
+    for (const delay of [800, 2500, 6000, 12000]) {
+      setTimeout(() => safely(() => scan('load'), [], '定期走査'), delay);
+    }
 
-    observer = new MutationObserver(() => scheduleScan('mutation'));
+    observer = new MutationObserver(() => safely(() => scheduleScan('mutation'), null, '変更検知'));
     observer.observe(document.documentElement, {
       childList: true,
       subtree: true,
@@ -617,5 +688,5 @@
     });
   }
 
-  start();
+  start().catch((e) => reportError('起動', e));
 })();

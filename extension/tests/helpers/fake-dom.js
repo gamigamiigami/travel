@@ -207,7 +207,20 @@ function loadContentScript({ url = 'https://travel.yahoo.co.jp/', title = 'テ�
     }
   }
 
-  return { context, sent, listeners, timers, warnings, runTimers, ready, root };
+  /**
+   * 同じページ（同じ isolated world）にもう一度 content.js を注入する。
+   * 拡張を更新したあとに popup が再注入する状況を再現する。
+   */
+  function injectAgain({ runtimeAlive: aliveNow = true } = {}) {
+    context.chrome.runtime.id = aliveNow ? 'testextension' : undefined;
+    vm.runInContext(
+      fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'content.js'), 'utf8'),
+      context,
+      { filename: 'content.js' }
+    );
+  }
+
+  return { context, sent, listeners, timers, warnings, runTimers, ready, injectAgain, root };
 }
 
 module.exports = { FakeElement, loadContentScript, matchAll };
