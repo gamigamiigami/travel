@@ -11,13 +11,15 @@ const path = require('path');
 const vm = require('vm');
 
 class FakeElement {
-  constructor({ tag = 'div', className = '', id = '', role = '', text = '', attrs = {}, visible = true, children = [] } = {}) {
+  constructor({ tag = 'div', className = '', id = '', role = '', text = '', hiddenText = '', attrs = {}, visible = true, children = [] } = {}) {
     this.tagName = tag.toUpperCase();
     this.className = className;
     this.id = id;
     this.attrs = Object.assign({}, attrs);
     if (role) this.attrs.role = role;
     this.innerText = text;
+    // 画面に出ていない文字。innerText には現れず textContent には現れる。
+    this.hiddenText = hiddenText;
     this.visible = visible;
     this.children = children;
     this.clicks = 0;
@@ -27,7 +29,7 @@ class FakeElement {
   }
 
   get textContent() {
-    return this.innerText;
+    return this.innerText + (this.hiddenText || '');
   }
 
   getAttribute(name) {

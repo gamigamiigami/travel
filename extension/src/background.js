@@ -77,6 +77,26 @@ function waitForLoad(tabId, timeoutMs = 30000) {
 
 const ACTIVITY_MAX = 200;
 
+/**
+ * 同じ内容を短時間に何度も書かない。
+ *
+ * クーポンが出ている間は走査のたびに「通知済みのため見送り」が出るため、
+ * 放っておくとログがそれで埋まり、肝心の行が読めなくなる。
+ */
+async function logOnce(key, withinMs, message, level) {
+  const stored = await chrome.storage.local.get('logOnce');
+  const seen = stored.logOnce || {};
+  const now = Date.now();
+  if (seen[key] && now - seen[key] < withinMs) return false;
+  seen[key] = now;
+  for (const [k, at] of Object.entries(seen)) {
+    if (now - at > withinMs * 4) delete seen[k];
+  }
+  await chrome.storage.local.set({ logOnce: seen });
+  await logActivity(message, level);
+  return true;
+}
+
 /** 巡回中に何をしたかを残す。裏で動くので、見えないと不安になるため。 */
 async function logActivity(message, level) {
   try {
@@ -270,7 +290,9 @@ async function handleCoupon(message, sender) {
       0,
       Math.round((settings.dedupeMinutes * 60000 - (Date.now() - last)) / 60000)
     );
-    await logActivity(
+    await logOnce(
+      'suppressed:' + signature,
+      30 * 60 * 1000,
       `検出しましたが通知済みのため見送り：${
         hit.amount ? hit.amount.toLocaleString() + '円' : '金額不明'
       }（あと約${remaining}分で再通知できます）`
@@ -567,7 +589,9 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 async function bootstrap() {
   // どの版が動いているかをログに残す。ファイルの入れ替え漏れの切り分け用。
   try {
-    await logActivity(`起動しました（v${chrome.runtime.getManifest().version}）`);
+    const version = chrome.runtime.getManifest().version;
+    // 更新のたびに何度も起動処理が走るので、同じ版の行は1分に1回までにする。
+    await logOnce('boot:' + version, 60 * 1000, `起動しました（v${version}）`);
   } catch (e) {
     /* ログに失敗しても起動は続ける */
   }

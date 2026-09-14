@@ -158,3 +158,32 @@ test('注入するファイルが manifest の実体と一致している', () =
     }
   }
 });
+
+test('同じ見送りをログに書き続けない', async () => {
+  // クーポンが出ている間は走査のたびに見送りになる。全部書くとログが埋まる。
+  const env = loadBackground();
+  const message = {
+    type: 'coupon',
+    hit: { amount: null, score: 99, timeLimitMin: 176, reasons: [], source: 'badge' },
+    pageUrl: 'https://travel.yahoo.co.jp/',
+  };
+  for (let i = 0; i < 10; i++) {
+    await env.post(message);
+    await env.settle();
+  }
+  const suppressed = (env.storage.data.activity || []).filter((a) =>
+    a.message.includes('通知済みのため見送り')
+  );
+  assert.strictEqual(suppressed.length, 1, `10回検出しても記録は1回: ${suppressed.length}`);
+  assert.strictEqual(env.calls.notifications.length, 1, '通知自体も1回だけ');
+});
+
+test('起動ログも同じ版なら繰り返さない', async () => {
+  const env = loadBackground();
+  for (let i = 0; i < 5; i++) {
+    for (const fn of env.listeners.installed) await fn();
+    await env.settle();
+  }
+  const boots = (env.storage.data.activity || []).filter((a) => a.message.includes('起動しました'));
+  assert.strictEqual(boots.length, 1);
+});

@@ -221,3 +221,49 @@ test('読み込みに失敗してもページ側で例外を投げない', () =>
     loadContentScript({ elements: [badge()], omit: ['messaging.js'] })
   );
 });
+
+test('畳まれていても DOM にある金額を読み取る', async () => {
+  // 「残176分」しか画面に出ていなくても、金額が DOM にあるなら押さずに取れる。
+  const counter = new FakeElement({ className: 'popup-badge-counter', text: '残176分' });
+  const wrapper = new FakeElement({
+    className: 'popup-badge-wrap',
+    text: '残176分',
+    hiddenText: '\n2,000円分\nクーポン獲得しました',
+    children: [counter],
+  });
+  const env = loadContentScript({ elements: [wrapper] });
+  await env.ready();
+
+  const response = await ask(env, { type: 'scan' });
+  assert.strictEqual(response.hits.length, 1);
+  assert.strictEqual(response.hits[0].amount, 2000, '金額不明のままにしない');
+  assert.strictEqual(response.hits[0].timeLimitMin, 176);
+});
+
+test('金額が分からないときはバッジの入れ物を押して開く', async () => {
+  const counter = new FakeElement({ className: 'popup-badge-counter', text: '残176分' });
+  const wrapper = new FakeElement({
+    className: 'popup-badge-wrap',
+    text: '残176分',
+    children: [counter],
+  });
+  const env = loadContentScript({ elements: [wrapper], settings: { expandBadge: true } });
+  await env.ready();
+  env.runTimers(1000);
+
+  // 内側の小さな要素ではなく、外側の入れ物を押す
+  assert.strictEqual(wrapper.clicks, 1, '入れ物を押すはず');
+  assert.strictEqual(counter.clicks, 0, '内側のカウンターは押さない');
+});
+
+test('金額が分かっているなら開きにいかない', async () => {
+  const wrapper = new FakeElement({
+    className: 'popup-badge-wrap',
+    text: '残176分',
+    hiddenText: '\n2,000円分\nクーポン獲得しました',
+  });
+  const env = loadContentScript({ elements: [wrapper], settings: { expandBadge: true } });
+  await env.ready();
+  env.runTimers(1000);
+  assert.strictEqual(wrapper.clicks, 0, '用が無いのに押さない');
+});

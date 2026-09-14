@@ -140,7 +140,7 @@
     let lastScanAt = 0;
     let debounceTimer = null;
     let observer = null;
-    let expandTried = false;
+    let expandTried = 0;
     let sawCountdownAt = 0;
     const claimed = new Set();
     const reportedNearMiss = new Set();
@@ -382,14 +382,51 @@
     }
 
     /**
-     * バッジを押して中身（金額）を出す。
-     * 「予約」「決済」などの語を含む要素は絶対に押さない。
+     * カウントダウンの要素から、クーポン表示全体の入れ物までさかのぼる。
+     *
+     * 見つかるのは「残176分」と書かれた内側の小さな要素で、押しても展開
+     * しないことがある。クリックを受けるのは外側の入れ物なので、そこまで上がる。
      */
-    function expandBadge(element) {
-      const label = (element.innerText || '').slice(0, 100);
+    function badgeContainer(element) {
+      let node = element;
+      for (let depth = 0; depth < 4; depth++) {
+        const parent = node.parentElement;
+        if (!parent) break;
+        if (!/badge|popup|coupon/i.test(String(parent.className || ''))) break;
+        node = parent;
+      }
+      return node;
+    }
+
+    /**
+     * 畳まれていて画面に出ていない金額を読む。
+     *
+     * innerText は隠れている文字を返さないが、textContent は返す。
+     * 展開しなくても DOM に金額があるなら、押す前にこれで取れる。
+     */
+    function hiddenAmountNear(element, container) {
+      const text = (container.textContent || '').slice(0, MAX_POPUP_TEXT);
+      if (!text) return null;
+      const found = D.scanText(
+        text,
+        Object.assign(baseOptions('badge'), {
+          strict: false,
+          minScore: settings.minScorePopup,
+        })
+      );
+      return found.length ? found[0] : null;
+    }
+
+    /**
+     * バッジを押して中身（金額）を出す。
+     * 「予約」「決済」や閉じるボタンは絶対に押さない。
+     */
+    function expandBadge(container) {
+      const label = (container.innerText || '').slice(0, 100);
       if (CLICK_FORBIDDEN.test(label)) return false;
+      if (/閉じる|×|✕/.test(label) && label.length <= 4) return false;
       try {
-        element.click();
+        container.click();
         return true;
       } catch (e) {
         return false;
@@ -479,16 +516,25 @@
       // 見逃すくらいなら「金額不明」で先に知らせる。60分で消えるのだから。
       const reported = results.slice();
       if (!results.length && badge) {
-        const badgeHit = {
-          amount: null,
-          score: 99,
-          reasons: ['残り時間バッジ'],
-          code: null,
-          timeLimitMin: badge.minutes,
-          snippet: badge.text,
-          source: 'badge',
-          url: location.href,
-        };
+        const container = safely(() => badgeContainer(badge.element), badge.element, 'バッジの入れ物');
+        // 畳まれていても DOM に金額があることがある。押す前に読んでみる。
+        const hidden = safely(() => hiddenAmountNear(badge.element, container), null, '隠れた金額の読み取り');
+        const badgeHit = hidden
+          ? Object.assign({}, hidden, {
+              timeLimitMin: hidden.timeLimitMin || badge.minutes,
+              source: 'badge',
+              reasons: (hidden.reasons || []).concat(['残り時間バッジ']),
+            })
+          : {
+              amount: null,
+              score: 99,
+              reasons: ['残り時間バッジ'],
+              code: null,
+              timeLimitMin: badge.minutes,
+              snippet: badge.text,
+              source: 'badge',
+              url: location.href,
+            };
         reported.push({ hit: badgeHit, element: badge.element });
         send({
           type: 'coupon',
@@ -500,11 +546,11 @@
           reason,
         });
 
-        // バッジを開けば金額が出る。開いたあとにもう一度見る。
-        if (settings.expandBadge && !expandTried) {
-          expandTried = true;
-          if (expandBadge(badge.element)) {
-            setTimeout(() => scan('afterExpand', targetName), 1500);
+        // それでも金額が分からなければ、開いて確かめる。
+        if (settings.expandBadge && badgeHit.amount === null && expandTried < 2) {
+          expandTried += 1;
+          if (safely(() => expandBadge(container), false, 'バッジを開く')) {
+            setTimeout(() => safely(() => scan('afterExpand', targetName), [], '展開後の走査'), 1500);
           }
         }
       }
