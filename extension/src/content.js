@@ -95,6 +95,7 @@
 
   let settings = null;
   let lastScanAt = 0;
+  let observer = null;
   let expandTried = false;
   let sawCountdownAt = 0;
   const reportedNearMiss = new Set();
@@ -103,10 +104,20 @@
   // 一度見たら少しの間は「カウントダウンがあった」とみなす。
   const COUNTDOWN_MEMORY_MS = 10 * 60 * 1000;
   const sawCountdownRecently = () => Date.now() - sawCountdownAt < COUNTDOWN_MEMORY_MS;
-  let debounceTimer = null;
-  const claimed = new Set();
 
-  const isTopFrame = window.top === window;
+  // 切り離されたときの扱いは messaging.js に任せる（単体テスト済み）。
+  const messenger = Messaging.createMessenger({
+    getRuntime: () => chrome.runtime,
+    onLost: () => {
+      try {
+        if (observer) observer.disconnect();
+      } catch (e) {
+        /* 既に切れていれば何もしなくてよい */
+      }
+      clearTimeout(debounceTimer);
+    },
+  });
+  const send = (message) => messenger.send(message);
 
   /**
    * Shadow DOM の中を集める。
@@ -310,6 +321,7 @@
   }
 
   function scan(reason, targetName) {
+    if (!messenger.isAlive()) return [];
     if (!settings || !settings.enabled) return [];
     const now = Date.now();
     if (reason !== 'manual' && now - lastScanAt < SCAN_COOLDOWN_MS) return [];
@@ -342,12 +354,12 @@
         const key = `nocountdown|${hit.amount}`;
         if (reportedNearMiss.has(key)) continue;
         reportedNearMiss.add(key);
-        chrome.runtime.sendMessage({
+        send({
           type: 'skipped',
           hit,
           reason: 'カウントダウンが無いので宿ごとのクーポンと判断',
           pageUrl: location.href,
-        }).catch(() => {});
+        });
       }
     }
 
@@ -355,17 +367,17 @@
       const key = `${hit.amount}|${hit.score}`;
       if (reportedNearMiss.has(key)) continue;
       reportedNearMiss.add(key);
-      chrome.runtime.sendMessage({
+      send({
         type: 'nearMiss',
         hit,
         threshold: threshold(hit),
         pageUrl: location.href,
-      }).catch(() => {});
+      });
     }
 
     for (const { hit, element } of results) {
       const claimedNow = tryClaim(element);
-      chrome.runtime.sendMessage({
+      send({
         type: 'coupon',
         hit,
         claimed: claimedNow,
@@ -373,7 +385,7 @@
         pageUrl: location.href,
         targetName: targetName || null,
         reason,
-      }).catch(() => {});
+      });
     }
 
     // 金額が取れなくても、カウントダウンのバッジが出ていればクーポンはある。
@@ -391,7 +403,7 @@
         url: location.href,
       };
       reported.push({ hit: badgeHit, element: badge.element });
-      chrome.runtime.sendMessage({
+      send({
         type: 'coupon',
         hit: badgeHit,
         claimed: false,
@@ -399,7 +411,7 @@
         pageUrl: location.href,
         targetName: targetName || null,
         reason,
-      }).catch(() => {});
+      });
 
       // バッジを開けば金額が出る。開いたあとにもう一度見る。
       if (settings.expandBadge && !expandTried) {
@@ -544,11 +556,9 @@
       // 注入直後は設定をまだ持っていないことがある。その場合は取ってから調べる。
       const run = settings
         ? Promise.resolve()
-        : chrome.runtime.sendMessage({ type: 'getSettings' })
-            .then((response) => {
-              settings = response && response.settings;
-            })
-            .catch(() => {});
+        : send({ type: 'getSettings' }).then((response) => {
+            settings = response && response.settings;
+          });
       run.then(() => {
         const results = scan('manual', message.targetName);
         sendResponse({
@@ -576,18 +586,14 @@
   });
 
   async function start() {
-    try {
-      const response = await chrome.runtime.sendMessage({ type: 'getSettings' });
-      settings = response && response.settings;
-    } catch (e) {
-      return;
-    }
+    const response = await send({ type: 'getSettings' });
+    settings = response && response.settings;
     if (!settings) return;
 
     // ポップアップは読み込み直後に出たり、少し遅れて出たりする。
     for (const delay of [800, 2500, 6000, 12000]) setTimeout(() => scan('load'), delay);
 
-    const observer = new MutationObserver(() => scheduleScan('mutation'));
+    observer = new MutationObserver(() => scheduleScan('mutation'));
     observer.observe(document.documentElement, {
       childList: true,
       subtree: true,
