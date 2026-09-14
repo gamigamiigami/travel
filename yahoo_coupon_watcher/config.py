@@ -78,7 +78,13 @@ DEFAULTS: dict[str, Any] = {
     "detect": {
         "min_amount": 1000,
         "max_amount": 100000,
-        "amounts_whitelist": [],
+        # スペシャルクーポンの金額はこの4種。宿ごとのクーポンを拾わないよう既定で絞る。
+        "amounts_whitelist": [1000, 2000, 3000, 5000],
+        # スペシャルクーポンだけが「残◯分」のカウントダウンを持つ。
+        # 宿ごとのクーポンは静的な表示なので、これで区別する。
+        "require_countdown": True,
+        # 有効時間は 60 / 120 / 150 / 180 分。バッジに出るのは残り時間なので上限だけ見る。
+        "max_time_limit_min": 180,
         "auto_claim": True,
         "claim_button_texts": [
             "クーポンを獲得", "獲得する", "クーポンをもらう", "受け取る",

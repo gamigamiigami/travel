@@ -76,7 +76,9 @@
   // カウントダウンのバッジしか出ない。「クーポン」の語も金額も無い。
   // 金額は展開して初めて出てくるので、まずこのバッジ自体を
   // 「クーポンが出ている証拠」として扱う。
-  const COUNTDOWN_RE = /残\s*([0-9]{1,4})\s*分/;
+  // バッジの中身は「残155分」だけ。前後に文章が付くものは別物なので、
+  // 完全一致で見る。これで「予約確認」などの無関係な要素を拾わない。
+  const COUNTDOWN_RE = /^残\s*([0-9]{1,4})\s*分$/;
   const BADGE_SELECTORS = [
     "[class*='popup-badge']",
     "[class*='oupon-badge']",
@@ -94,7 +96,13 @@
   let settings = null;
   let lastScanAt = 0;
   let expandTried = false;
+  let sawCountdownAt = 0;
   const reportedNearMiss = new Set();
+
+  // バッジを開くとカウントダウンの表示が消えることがあるので、
+  // 一度見たら少しの間は「カウントダウンがあった」とみなす。
+  const COUNTDOWN_MEMORY_MS = 10 * 60 * 1000;
+  const sawCountdownRecently = () => Date.now() - sawCountdownAt < COUNTDOWN_MEMORY_MS;
   let debounceTimer = null;
   const claimed = new Set();
 
@@ -266,7 +274,10 @@
           const match = COUNTDOWN_RE.exec(text);
           if (!match) continue;
           const minutes = Number(match[1]);
-          if (!(minutes >= 1 && minutes <= 1440)) continue;
+          const limit = Number(settings.maxTimeLimitMin) || 180;
+          // スペシャルクーポンの有効時間は最長180分。それを超える
+          // カウントダウンは別物（セールの残り時間など）。
+          if (!(minutes >= 1 && minutes <= limit)) continue;
           return { element, minutes, text };
         }
       }
@@ -313,10 +324,32 @@
       return [];
     }
 
+    // 先にバッジを見る。カウントダウンの有無が、スペシャルクーポンと
+    // 宿ごとのクーポンを分ける決め手になる。
+    const badge = findCouponBadge();
+    if (badge) sawCountdownAt = Date.now();
+
     const threshold = (hit) =>
       hit.source === 'popup' ? settings.minScorePopup : settings.minScorePage;
-    const results = candidates.filter(({ hit }) => hit.score >= threshold(hit));
+    const scored = candidates.filter(({ hit }) => hit.score >= threshold(hit));
     const nearMisses = candidates.filter(({ hit }) => hit.score < threshold(hit));
+
+    // カウントダウンが無いなら宿ごとのクーポン。通知しない。
+    const needsCountdown = settings.requireCountdown && !sawCountdownRecently();
+    const results = needsCountdown ? [] : scored;
+    if (needsCountdown) {
+      for (const { hit } of scored) {
+        const key = `nocountdown|${hit.amount}`;
+        if (reportedNearMiss.has(key)) continue;
+        reportedNearMiss.add(key);
+        chrome.runtime.sendMessage({
+          type: 'skipped',
+          hit,
+          reason: 'カウントダウンが無いので宿ごとのクーポンと判断',
+          pageUrl: location.href,
+        }).catch(() => {});
+      }
+    }
 
     for (const { hit } of nearMisses) {
       const key = `${hit.amount}|${hit.score}`;
@@ -346,7 +379,6 @@
     // 金額が取れなくても、カウントダウンのバッジが出ていればクーポンはある。
     // 見逃すくらいなら「金額不明」で先に知らせる。60分で消えるのだから。
     if (!results.length) {
-      const badge = findCouponBadge();
       if (badge) {
         chrome.runtime.sendMessage({
           type: 'coupon',

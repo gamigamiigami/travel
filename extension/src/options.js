@@ -1,12 +1,12 @@
 'use strict';
 
 const CHECKBOXES = [
-  'enabled', 'patrolEnabled', 'notifyDesktop', 'notifyNtfy', 'notifyDiscord', 'autoClaim', 'searchEnabled', 'preferExpensive', 'expandBadge',
+  'enabled', 'patrolEnabled', 'notifyDesktop', 'notifyNtfy', 'notifyDiscord', 'autoClaim', 'searchEnabled', 'preferExpensive', 'expandBadge', 'requireCountdown',
 ];
 const NUMBERS = [
   'intervalMinutes', 'wanderPages', 'dwellSeconds', 'maxPatrolsPerDay',
   'quietStartHour', 'quietEndHour', 'minAmount', 'dedupeMinutes',
-  'minScorePage', 'minScorePopup', 'minHotelPrice',
+  'minScorePage', 'minScorePopup', 'minHotelPrice', 'maxTimeLimitMin',
 ];
 const TEXTS = ['discordWebhookUrl', 'ntfyTopic'];
 

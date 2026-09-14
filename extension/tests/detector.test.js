@@ -150,3 +150,21 @@ test('畳まれたバッジの残り時間を読み取れる', () => {
   assert.strictEqual(D.findTimeLimit('残171分'), 171);
   assert.deepStrictEqual(scan('残155分', { strict: false }), []);
 });
+
+test('スペシャルクーポンの4種の金額だけを通す', () => {
+  const whitelist = [1000, 2000, 3000, 5000];
+  for (const amount of whitelist) {
+    const text = `スペシャルクーポン ${amount.toLocaleString()}円OFF`;
+    assert.deepStrictEqual(amounts(scan(text, { amountsWhitelist: whitelist })), [amount], text);
+  }
+  for (const amount of [500, 1500, 4000, 10000, 50000]) {
+    const text = `割引クーポン ${amount.toLocaleString()}円OFF`;
+    assert.deepStrictEqual(scan(text, { amountsWhitelist: whitelist }), [], text);
+  }
+});
+
+test('スペシャルクーポンの4種の有効時間を読み取れる', () => {
+  for (const minutes of [60, 120, 150, 180]) {
+    assert.strictEqual(D.findTimeLimit(`残${minutes}分`), minutes);
+  }
+});

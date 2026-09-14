@@ -52,7 +52,8 @@ CLICK_FORBIDDEN = re.compile(
 
 # 畳まれた状態のクーポンは「残155分」というカウントダウンのバッジしか出さない。
 # 「クーポン」の語も金額も無いので、このバッジ自体を存在の証拠として扱う。
-COUNTDOWN_RE = re.compile(r"残\s*([0-9]{1,4})\s*分")
+# バッジの中身は「残155分」だけ。前後に文章が付くものは別物なので完全一致で見る。
+COUNTDOWN_RE = re.compile(r"^残\s*([0-9]{1,4})\s*分$")
 BADGE_SELECTORS = (
     "[class*='popup-badge']",
     "[class*='oupon-badge']",
@@ -299,11 +300,12 @@ class Watcher:
                         continue
                     if not text or len(text) > MAX_BADGE_TEXT:
                         continue
-                    match = COUNTDOWN_RE.search(text)
+                    match = COUNTDOWN_RE.match(text)
                     if not match:
                         continue
                     minutes = int(match.group(1))
-                    if not 1 <= minutes <= 1440:
+                    limit = int(self.detect.get("max_time_limit_min", 180))
+                    if not 1 <= minutes <= limit:
                         continue
                     return [
                         CouponHit(
@@ -325,9 +327,19 @@ class Watcher:
         self._network_hits.clear()
         hits.extend(self.scan_popups(page, browser))
         hits.extend(self.scan_page(page, browser))
+
+        badge = self.scan_badge(page, browser)
+
+        # カウントダウンが無いものは宿ごとのクーポン。スペシャルクーポンだけを
+        # 見たいので落とす。
+        if self.detect.get("require_countdown", True) and not badge:
+            if hits:
+                log.info("カウントダウンが無いので宿ごとのクーポンと判断しました")
+            return []
+
         # 金額が取れたものが1つも無いときだけ、バッジの存在で判断する。
         if not hits:
-            hits.extend(self.scan_badge(page, browser))
+            hits.extend(badge)
         return dedupe_hits(hits)
 
     # ---------------------------------------------------------- クーポン獲得

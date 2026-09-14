@@ -287,6 +287,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     Settings.getSettings().then((settings) => sendResponse({ settings }));
     return true;
   }
+  if (message.type === 'skipped') {
+    const hit = message.hit || {};
+    logActivity(
+      `見送り：${(hit.amount || 0).toLocaleString()}円 を見つけましたが、${message.reason}`
+    );
+    return false;
+  }
   if (message.type === 'nearMiss') {
     // 検出はしなかったが、それらしいものは見えていた、という記録。
     // しきい値を下げるべきか判断する材料になる。

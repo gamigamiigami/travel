@@ -147,10 +147,13 @@ class FakeElement:
 
 
 class FakeFrame:
-    def __init__(self, url, body_text="", popup_texts=()):
+    def __init__(self, url, body_text="", popup_texts=(), badge_texts=()):
         self.url = url
         self._body = body_text
         self._popups = list(popup_texts)
+        # スペシャルクーポンは「残155分」のカウントダウンを必ず伴う。
+        # 既定でそれを持たせ、無い場合を明示的にテストする。
+        self._badges = list(badge_texts)
 
     def locator(self, selector):
         return FakeLocator(self._body)
@@ -159,7 +162,19 @@ class FakeFrame:
         # 最初のセレクタでだけ返す（同じ要素を何度も返さないため）
         if selector == "[role='dialog']":
             return [FakeElement(text) for text in self._popups]
+        if selector == "[class*='popup-badge']":
+            return [FakeElement(text) for text in self._badges]
         return []
+
+
+def coupon_frame(url, body_text="", popup_texts=(), minutes=155):
+    """クーポンが出ている状態のフレーム（カウントダウン付き）。"""
+    return FakeFrame(
+        url,
+        body_text=body_text,
+        popup_texts=popup_texts,
+        badge_texts=[f"残{minutes}分"],
+    )
 
 
 class FakeMouse:
@@ -199,7 +214,7 @@ TOP = "https://travel.yahoo.co.jp/"
 def test_coupon_inside_iframe_is_detected(watcher):
     """GPT版から取り入れた点。メインフレームだけ見ていると取りこぼす。"""
     page = FakePage([
-        FakeFrame(TOP, body_text="宿泊プランを探す"),
+        coupon_frame(TOP, body_text="宿泊プランを探す"),
         FakeFrame(TOP + "promo/iframe",
                   popup_texts=["スペシャルクーポン\n5,000円OFF\n残り180分限定"]),
     ])
@@ -211,7 +226,7 @@ def test_coupon_inside_iframe_is_detected(watcher):
 
 def test_main_frame_only_page_still_works(watcher):
     page = FakePage([
-        FakeFrame(TOP, body_text="スペシャルクーポン 3,000円OFF 残り90分限定")
+        coupon_frame(TOP, body_text="スペシャルクーポン 3,000円OFF 残り90分限定")
     ])
     hits = watcher.check(page, "chrome")
     assert [h.amount for h in hits] == [3000]
@@ -226,7 +241,7 @@ def test_ordinary_page_produces_no_hits(watcher):
 
 def test_visit_records_detection_in_history(watcher):
     page = FakePage([
-        FakeFrame(TOP, body_text="スペシャルクーポン 5,000円OFF 残り180分限定")
+        coupon_frame(TOP, body_text="スペシャルクーポン 5,000円OFF 残り180分限定")
     ])
     notified = watcher.visit(page, "edge", TOP, "トップページ")
     assert notified == 1
@@ -254,7 +269,7 @@ def test_visit_records_miss_in_history(watcher):
 
 def test_same_coupon_notifies_once(watcher):
     page = FakePage([
-        FakeFrame(TOP, body_text="スペシャルクーポン 5,000円OFF 残り180分限定")
+        coupon_frame(TOP, body_text="スペシャルクーポン 5,000円OFF 残り180分限定")
     ])
     assert watcher.visit(page, "edge", TOP, "トップページ") == 1
     assert watcher.visit(page, "edge", TOP, "トップページ") == 0  # 抑止される
@@ -262,7 +277,7 @@ def test_same_coupon_notifies_once(watcher):
 
 def test_same_coupon_notifies_per_browser(watcher):
     page = FakePage([
-        FakeFrame(TOP, body_text="スペシャルクーポン 5,000円OFF 残り180分限定")
+        coupon_frame(TOP, body_text="スペシャルクーポン 5,000円OFF 残り180分限定")
     ])
     assert watcher.visit(page, "edge", TOP, "トップページ") == 1
     assert watcher.visit(page, "chrome", TOP, "トップページ") == 1
@@ -270,7 +285,7 @@ def test_same_coupon_notifies_per_browser(watcher):
 
 def test_screenshot_saved_on_hit(watcher):
     page = FakePage([
-        FakeFrame(TOP, body_text="スペシャルクーポン 5,000円OFF 残り180分限定")
+        coupon_frame(TOP, body_text="スペシャルクーポン 5,000円OFF 残り180分限定")
     ])
     watcher.visit(page, "edge", TOP, "トップページ")
     assert len(page.screenshots) == 1
@@ -281,23 +296,10 @@ def test_screenshot_saved_on_hit(watcher):
 # 畳まれたクーポンバッジ（「残155分」しか出ない状態）の検出
 # ------------------------------------------------------------------
 
-class FakeBadgeFrame(FakeFrame):
-    """バッジらしき要素を返すフレーム。"""
-
-    def __init__(self, url, body_text="", badge_texts=()):
-        super().__init__(url, body_text=body_text)
-        self._badges = list(badge_texts)
-
-    def query_selector_all(self, selector):
-        if selector == "[class*='popup-badge']":
-            return [FakeElement(text) for text in self._badges]
-        return []
-
-
 def test_countdown_badge_is_treated_as_a_coupon(watcher):
     """金額が無くても、残り時間バッジが出ていればクーポンはある。"""
     page = FakePage([
-        FakeBadgeFrame(TOP, body_text="宿泊プランを探す", badge_texts=["残155分"])
+        FakeFrame(TOP, body_text="宿泊プランを探す", badge_texts=["残155分"])
     ])
     hits = watcher.check(page, "edge")
     assert len(hits) == 1
@@ -308,7 +310,7 @@ def test_countdown_badge_is_treated_as_a_coupon(watcher):
 
 def test_badge_is_ignored_when_amount_is_known(watcher):
     """金額が取れているなら、そちらを使う。バッジで二重に数えない。"""
-    page = FakeBadgeFrame(
+    page = FakeFrame(
         TOP,
         body_text="スペシャルクーポン 5,000円OFF 残り180分限定",
         badge_texts=["残155分"],
@@ -320,12 +322,12 @@ def test_badge_is_ignored_when_amount_is_known(watcher):
 def test_long_text_is_not_a_badge(watcher):
     """本文中の「残り155分」のような長い文はバッジとみなさない。"""
     long_text = "こちらの宿は人気です。" * 8 + "残155分"  # 60文字を超える
-    page = FakePage([FakeBadgeFrame(TOP, badge_texts=[long_text])])
+    page = FakePage([FakeFrame(TOP, badge_texts=[long_text])])
     assert watcher.check(page, "edge") == []
 
 
 def test_badge_notifies(watcher):
-    page = FakePage([FakeBadgeFrame(TOP, badge_texts=["残155分"])])
+    page = FakePage([FakeFrame(TOP, badge_texts=["残155分"])])
     assert watcher.visit(page, "edge", TOP, "トップページ") == 1
 
     from yahoo_coupon_watcher.history import read_rows
@@ -333,3 +335,82 @@ def test_badge_notifies(watcher):
     rows = read_rows(watcher.history.path)
     assert rows[0].detected is True
     assert rows[0].amount is None
+
+
+# ------------------------------------------------------------------
+# スペシャルクーポンと宿ごとのクーポンの区別
+# ------------------------------------------------------------------
+
+def test_hotel_coupon_without_countdown_is_ignored(watcher):
+    """宿ごとのクーポンは静的な表示でカウントダウンが無い。通知しない。"""
+    page = FakePage([
+        FakeFrame(TOP + "dp/hotel-1/", body_text="この宿で使える割引クーポン 3,000円OFF")
+    ])
+    assert watcher.check(page, "edge") == []
+
+
+def test_same_text_with_countdown_is_a_special_coupon(watcher):
+    """同じ文言でも、カウントダウンがあればスペシャルクーポン。"""
+    page = FakePage([
+        coupon_frame(TOP, body_text="スペシャルクーポン 3,000円OFF")
+    ])
+    assert [h.amount for h in watcher.check(page, "edge")] == [3000]
+
+
+@pytest.mark.parametrize("amount", [1000, 2000, 3000, 5000])
+def test_special_coupon_amounts_are_notified(watcher, amount):
+    page = FakePage([
+        coupon_frame(TOP, body_text=f"スペシャルクーポン {amount:,}円OFF")
+    ])
+    assert [h.amount for h in watcher.check(page, "edge")] == [amount]
+
+
+@pytest.mark.parametrize("amount", [500, 1500, 4000, 10000, 50000])
+def test_other_amounts_without_countdown_are_ignored(watcher, amount):
+    """スペシャルクーポンの金額は 1000/2000/3000/5000円。
+    それ以外でカウントダウンも無いものは宿ごとのクーポン。"""
+    page = FakePage([
+        FakeFrame(TOP, body_text=f"割引クーポン {amount:,}円OFF")
+    ])
+    assert watcher.check(page, "edge") == []
+
+
+@pytest.mark.parametrize("amount", [1500, 4000, 50000])
+def test_out_of_range_amount_falls_back_to_unknown(watcher, amount):
+    """カウントダウンがある以上スペシャルクーポンではある。ただし読み取った
+    金額が対象外なら、その金額を名乗らず「金額不明」として知らせる。"""
+    page = FakePage([
+        coupon_frame(TOP, body_text=f"スペシャルクーポン {amount:,}円OFF")
+    ])
+    hits = watcher.check(page, "edge")
+    assert len(hits) == 1
+    assert hits[0].amount is None
+    assert hits[0].source == "badge"
+
+
+def test_countdown_over_the_limit_is_not_a_special_coupon(watcher):
+    """有効時間は最長180分。それを超えるカウントダウンはセールなど別物。"""
+    page = FakePage([FakeFrame(TOP, badge_texts=["残600分"])])
+    assert watcher.check(page, "edge") == []
+
+
+@pytest.mark.parametrize("minutes", [60, 120, 150, 180])
+def test_all_special_coupon_durations_are_accepted(watcher, minutes):
+    page = FakePage([FakeFrame(TOP, badge_texts=[f"残{minutes}分"])])
+    hits = watcher.check(page, "edge")
+    assert len(hits) == 1
+    assert hits[0].time_limit_min == minutes
+
+
+def test_countdown_with_surrounding_text_is_not_a_badge(watcher):
+    """「セール残り30分」のような文はバッジではない。完全一致のみ。"""
+    page = FakePage([FakeFrame(TOP, badge_texts=["セール残30分です"])])
+    assert watcher.check(page, "edge") == []
+
+
+def test_require_countdown_can_be_turned_off(watcher):
+    watcher.detect = {**watcher.detect, "require_countdown": False}
+    page = FakePage([
+        FakeFrame(TOP, body_text="スペシャルクーポン 3,000円OFF")
+    ])
+    assert [h.amount for h in watcher.check(page, "edge")] == [3000]

@@ -170,3 +170,9 @@ test('宿の詳細ページは避けるページより強い', () => {
       Settings.linkWeight('https://travel.yahoo.co.jp/kanko/a/')
   );
 });
+
+test('既定でスペシャルクーポンの条件に絞られている', () => {
+  assert.deepStrictEqual(Settings.DEFAULTS.amountsWhitelist, [1000, 2000, 3000, 5000]);
+  assert.strictEqual(Settings.DEFAULTS.requireCountdown, true);
+  assert.strictEqual(Settings.DEFAULTS.maxTimeLimitMin, 180);
+});

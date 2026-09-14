@@ -107,10 +107,27 @@
     <label class="field"><span>しきい値：ページ全体（厳しめ）</span><input type="number" id="minScorePage" min="0" max="30"></label>
     <label class="field"><span>しきい値：ポップアップ内（緩め）</span><input type="number" id="minScorePopup" min="0" max="30"></label>
   </div>
-  <label class="field">
-    <span>この金額だけ通知（カンマ区切り。空なら上の下限で判定）</span>
-    <input type="text" id="amountsWhitelist" placeholder="例: 3000,5000,50000">
-  </label>
+  <label class="row"><input type="checkbox" id="requireCountdown"> スペシャルクーポンだけを通知する（宿ごとのクーポンを無視）</label>
+  <p class="hint">
+    スペシャルクーポンだけが「残◯分」のカウントダウンを持ちます。宿ごとのクーポンは
+    静的な表示でカウントダウンがありません。<b>これが両者を分ける決め手</b>です。
+    オフにすると宿ごとのクーポンも通知します。
+  </p>
+  <div class="grid2">
+    <label class="field">
+      <span>この金額だけ通知（カンマ区切り。空なら下限だけで判定）</span>
+      <input type="text" id="amountsWhitelist" placeholder="例: 1000,2000,3000,5000">
+    </label>
+    <label class="field">
+      <span>カウントダウンの上限（分）</span>
+      <input type="number" id="maxTimeLimitMin" min="1" max="1440">
+    </label>
+  </div>
+  <p class="hint">
+    スペシャルクーポンは 1,000 / 2,000 / 3,000 / 5,000円、有効時間は 60 / 120 / 150 / 180分です。
+    バッジに出るのは<b>残り</b>時間なので、時間は上限だけを見ています（180分のクーポンでも
+    「残155分」と表示されるため）。
+  </p>
   <label class="field">
     <span>この文言を含むものは無視（1行に1つ。正規表現）</span>
     <textarea id="ignorePatterns" placeholder="誤検知が出たら、その文言をここに足してください"></textarea>

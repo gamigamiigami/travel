@@ -42,7 +42,14 @@
     // 検出
     minAmount: 1000,
     maxAmount: 100000,
-    amountsWhitelist: [],
+    // スペシャルクーポンの金額はこの4種。宿ごとのクーポンを拾わないよう既定で絞る。
+    amountsWhitelist: [1000, 2000, 3000, 5000],
+    // スペシャルクーポンだけが「残◯分」のカウントダウンを持つ。
+    // 宿ごとのクーポンは静的な表示でカウントダウンが無いので、これで区別する。
+    requireCountdown: true,
+    // スペシャルクーポンの有効時間は 60 / 120 / 150 / 180 分。
+    // バッジに出るのは「残り」時間なので、上限だけを見る。
+    maxTimeLimitMin: 180,
     minScorePage: 7,
     minScorePopup: 4,
     ignorePatterns: [],
