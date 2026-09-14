@@ -70,9 +70,11 @@ DEFAULTS: dict[str, Any] = {
             r"/review/(post|write)", r"/inquiry", r"/contact", r"/cancel",
         ],
         # 「宿を具体的に調べる」動きを再現するため、この形のリンクを優先的に選ぶ。
+        # クーポンのバッジが出るのは宿の詳細ページと検索結果。テーマページや
+        # エリアページには出ていなかったので、宿の詳細を優先する。
+        # 宿の詳細は /dp/ だけでなく /00916717/ のような数字のパスもある。
         "preferred_url_patterns": [
-            r"/dp/", r"/hotel", r"/domestic", r"/area", r"/search", r"/onsen",
-            r"/theme", r"/ranking",
+            r"/dp/", r"/[0-9]{6,}/", r"/search",
         ],
     },
     "detect": {

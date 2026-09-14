@@ -261,7 +261,22 @@ async function handleCoupon(message, sender) {
     reasons: (hit.reasons || []).join('・'),
   });
 
-  if (!(await shouldNotify(signature, settings.dedupeMinutes))) return;
+  if (!(await shouldNotify(signature, settings.dedupeMinutes))) {
+    // 検出はしている。通知しないのは「同じものを既に知らせたから」。
+    // これを黙って捨てると、動いていないように見えてしまう。
+    const stored = await chrome.storage.local.get('notified');
+    const last = (stored.notified || {})[signature] || Date.now();
+    const remaining = Math.max(
+      0,
+      Math.round((settings.dedupeMinutes * 60000 - (Date.now() - last)) / 60000)
+    );
+    await logActivity(
+      `検出しましたが通知済みのため見送り：${
+        hit.amount ? hit.amount.toLocaleString() + '円' : '金額不明'
+      }（あと約${remaining}分で再通知できます）`
+    );
+    return;
+  }
   await markNotified(signature, settings.dedupeMinutes);
 
   const title = buildTitle(hit);
@@ -319,6 +334,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     testNotify().then((r) => sendResponse(r)).catch((e) =>
       sendResponse({ ok: false, error: String(e) })
     );
+    return true;
+  }
+  if (message.type === 'resetDedupe') {
+    chrome.storage.local
+      .set({ notified: {} })
+      .then(() => logActivity('重複抑止をリセットしました'))
+      .then(() => sendResponse({ ok: true }));
     return true;
   }
   if (message.type === 'rescheduleAlarm') {

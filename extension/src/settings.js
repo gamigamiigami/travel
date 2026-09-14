@@ -70,8 +70,17 @@
     '/review/(post|write)', '/inquiry', '/contact', '/cancel',
   ];
   // 「具体的に宿を調べている」動きを作るため、この形のリンクを優先する
-  const PREFERRED_URL_PATTERNS = ['/dp/', '/hotel', '/domestic', '/area', '/search', '/onsen', '/theme', '/ranking'];
-  // 宿が並ばないページ。踏んでも無駄なので選ばれにくくする。
+  // クーポンのバッジが出るのは宿の詳細ページと検索結果。実際の診断データで
+  // テーマページやエリアページには出ていなかったので、重みに差をつける。
+  const LINK_WEIGHTS = [
+    // 宿の詳細（/dp/ か /00916717/ のような数字だけのパス）と検索結果
+    [/\/dp\/|\/[0-9]{6,}\/|\/search/i, 6],
+    // 宿の一覧には辿り着くが、バッジは出にくい
+    [/\/hotel|\/domestic|\/onsen|\/area|\/theme|\/ranking/i, 2],
+    // 宿が並ばないページ。踏んでも無駄。
+    [/\/kanko\/|\/help|\/sitemap|\/guide|\/notice/i, 0.15],
+  ];
+  const PREFERRED_URL_PATTERNS = ['/dp/', '/[0-9]{6,}/', '/search'];
   const AVOID_URL_PATTERNS = ['/kanko/', '/help', '/sitemap', '/guide', '/notice'];
 
   function randomTopic() {
@@ -107,8 +116,10 @@
   }
 
   function linkWeight(url) {
-    if (AVOID_URL_PATTERNS.some((pattern) => new RegExp(pattern, 'i').test(url))) return 0.15;
-    return PREFERRED_URL_PATTERNS.some((pattern) => new RegExp(pattern, 'i').test(url)) ? 4 : 1;
+    for (const [pattern, weight] of LINK_WEIGHTS) {
+      if (pattern.test(url)) return weight;
+    }
+    return 1;
   }
 
   function pickWeighted(urls) {
@@ -173,6 +184,7 @@
     BLOCKED_URL_PATTERNS,
     PREFERRED_URL_PATTERNS,
     AVOID_URL_PATTERNS,
+    LINK_WEIGHTS,
     randomTopic,
     getSettings,
     saveSettings,

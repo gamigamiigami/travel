@@ -391,6 +391,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     await saveDiagnostics();
   });
 
+  $('resetDedupe').addEventListener('click', async () => {
+    await chrome.runtime.sendMessage({ type: 'resetDedupe' }).catch(() => {});
+    showStatus('diagStatus', '重複抑止をリセットしました。同じクーポンでももう一度通知します。', true);
+    await renderActivity();
+  });
+
   $('clearActivity').addEventListener('click', async () => {
     await chrome.storage.local.set({ activity: [] });
     await renderActivity();

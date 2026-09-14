@@ -378,37 +378,40 @@
 
     // 金額が取れなくても、カウントダウンのバッジが出ていればクーポンはある。
     // 見逃すくらいなら「金額不明」で先に知らせる。60分で消えるのだから。
-    if (!results.length) {
-      if (badge) {
-        chrome.runtime.sendMessage({
-          type: 'coupon',
-          hit: {
-            amount: null,
-            score: 99,
-            reasons: ['残り時間バッジ'],
-            code: null,
-            timeLimitMin: badge.minutes,
-            snippet: badge.text,
-            source: 'badge',
-            url: location.href,
-          },
-          claimed: false,
-          pageTitle: document.title,
-          pageUrl: location.href,
-          targetName: targetName || null,
-          reason,
-        }).catch(() => {});
+    const reported = results.slice();
+    if (!results.length && badge) {
+      const badgeHit = {
+        amount: null,
+        score: 99,
+        reasons: ['残り時間バッジ'],
+        code: null,
+        timeLimitMin: badge.minutes,
+        snippet: badge.text,
+        source: 'badge',
+        url: location.href,
+      };
+      reported.push({ hit: badgeHit, element: badge.element });
+      chrome.runtime.sendMessage({
+        type: 'coupon',
+        hit: badgeHit,
+        claimed: false,
+        pageTitle: document.title,
+        pageUrl: location.href,
+        targetName: targetName || null,
+        reason,
+      }).catch(() => {});
 
-        // バッジを開けば金額が出る。開いたあとにもう一度見る。
-        if (settings.expandBadge && !expandTried) {
-          expandTried = true;
-          if (expandBadge(badge.element)) {
-            setTimeout(() => scan('afterExpand', targetName), 1500);
-          }
+      // バッジを開けば金額が出る。開いたあとにもう一度見る。
+      if (settings.expandBadge && !expandTried) {
+        expandTried = true;
+        if (expandBadge(badge.element)) {
+          setTimeout(() => scan('afterExpand', targetName), 1500);
         }
       }
     }
-    return results;
+    // バッジ由来のヒットも返す。返さないと、通知は出ているのに画面上は
+    // 「検出なし」と表示されてしまい、動いていないように見える。
+    return reported;
   }
 
   /**
@@ -521,7 +524,10 @@
       if (absolute === location.href || seen.has(absolute)) continue;
       seen.add(absolute);
       // 価格を読むのは宿の詳細らしきリンクだけ。全リンクでやると重い。
-      const price = /\/dp\/|hotel|yad/i.test(absolute) ? cardPrice(anchor) : null;
+      // 宿の詳細ページは /dp/ だけでなく /00916717/ のような数字のパスもある。
+      const price = /\/dp\/|hotel|yad|\/[0-9]{6,}\//i.test(absolute)
+        ? cardPrice(anchor)
+        : null;
       items.push({ url: absolute, price });
       if (items.length >= 400) break;
     }

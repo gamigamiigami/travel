@@ -147,12 +147,22 @@ document.addEventListener('DOMContentLoaded', async () => {
       return;
     }
     const hits = result.hits || [];
+    const describe = (h) =>
+      h.amount
+        ? h.amount.toLocaleString() + '円'
+        : `金額不明${h.timeLimitMin ? `（残${h.timeLimitMin}分）` : ''}`;
     show(
       hits.length
-        ? `${hits.map((h) => h.amount.toLocaleString() + '円').join('・')} を検出しました`
+        ? `${hits.map(describe).join('・')} を検出しました`
         : 'いまはクーポンを検出できませんでした。（普段はこれが正常です）',
       hits.length > 0
     );
+  });
+
+  $('reset').addEventListener('click', async () => {
+    await chrome.runtime.sendMessage({ type: 'resetDedupe' }).catch(() => {});
+    show('重複抑止をリセットしました。同じクーポンでももう一度通知します。', true);
+    await renderActivity();
   });
 
   $('options').addEventListener('click', () => chrome.runtime.openOptionsPage());

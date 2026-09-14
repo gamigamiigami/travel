@@ -176,3 +176,21 @@ test('既定でスペシャルクーポンの条件に絞られている', () =>
   assert.strictEqual(Settings.DEFAULTS.requireCountdown, true);
   assert.strictEqual(Settings.DEFAULTS.maxTimeLimitMin, 180);
 });
+
+test('クーポンのバッジが出るページを厚く選ぶ', () => {
+  const weight = Settings.linkWeight;
+  // 診断データで、バッジは宿の詳細と検索結果には出ていたが
+  // テーマページには出ていなかった。
+  const hotelDp = weight('https://travel.yahoo.co.jp/dp/hotel-1/');
+  const hotelNumeric = weight('https://travel.yahoo.co.jp/00916717/?cid=1');
+  const search = weight('https://travel.yahoo.co.jp/search?cid=1');
+  const theme = weight('https://travel.yahoo.co.jp/area/ma000000/t4087/');
+  const plain = weight('https://travel.yahoo.co.jp/list/');
+  const kanko = weight('https://travel.yahoo.co.jp/kanko/kanazawa/');
+
+  assert.strictEqual(hotelDp, hotelNumeric, '数字IDの宿ページも /dp/ と同じ扱い');
+  assert.ok(hotelDp > theme);
+  assert.ok(search > theme);
+  assert.ok(theme > plain);
+  assert.ok(plain > kanko);
+});
