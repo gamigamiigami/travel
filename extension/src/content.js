@@ -95,10 +95,14 @@
 
   let settings = null;
   let lastScanAt = 0;
+  let debounceTimer = null;
   let observer = null;
   let expandTried = false;
   let sawCountdownAt = 0;
+  const claimed = new Set();
   const reportedNearMiss = new Set();
+
+  const isTopFrame = window.top === window;
 
   // バッジを開くとカウントダウンの表示が消えることがあるので、
   // 一度見たら少しの間は「カウントダウンがあった」とみなす。
@@ -118,6 +122,21 @@
     },
   });
   const send = (message) => messenger.send(message);
+
+  /**
+   * 失敗しても全体を止めないための包み。
+   *
+   * 検出は「ポップアップ」「ページ全文」「カウントダウンのバッジ」の3経路。
+   * まとめて try で囲むと、1か所の失敗で全部が無効になる。経路ごとに包む。
+   */
+  function safely(fn, fallback) {
+    try {
+      return fn();
+    } catch (e) {
+      console.warn('[クーポンウォッチャー] 判定の一部に失敗:', (e && e.message) || e);
+      return fallback;
+    }
+  }
 
   /**
    * Shadow DOM の中を集める。
@@ -327,18 +346,15 @@
     if (reason !== 'manual' && now - lastScanAt < SCAN_COOLDOWN_MS) return [];
     lastScanAt = now;
 
-    // いったん「しきい値なし」で全部拾い、あとで足切りする。
-    // 足切りされたものも記録しておけば「惜しかった」が分かり、調整できる。
-    let candidates;
-    try {
-      candidates = best(scanPopups(0).concat(scanWholePage(0)));
-    } catch (e) {
-      return [];
-    }
+    // 判定は3つの経路がある。どれか1つが失敗しても、残りは動かす。
+    // まとめて try で囲むと、1か所の失敗で検出が全滅する。
+    const candidates = best(
+      safely(() => scanPopups(0), []).concat(safely(() => scanWholePage(0), []))
+    );
 
     // 先にバッジを見る。カウントダウンの有無が、スペシャルクーポンと
     // 宿ごとのクーポンを分ける決め手になる。
-    const badge = findCouponBadge();
+    const badge = safely(() => findCouponBadge(), null);
     if (badge) sawCountdownAt = Date.now();
 
     const threshold = (hit) =>
